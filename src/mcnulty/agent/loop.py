@@ -55,7 +55,6 @@ from mcnulty.blobs import BlobCache
 from mcnulty.clients.arena import Task
 from mcnulty.clients.openrouter import (
     AssistantMessage,
-    BudgetExhausted,
     LLMError,
     Message,
     OpenRouterClient,
@@ -74,6 +73,7 @@ SUBMIT_SOON_LEFT = 2  # steps left when the model is told to submit next
 MAX_TOKENS = 3000  # per model reply
 LAST_CALL_LEFT = 240.0  # seconds before the deadline: the next call is the submit-only last step
 CALL_RESERVE = 60.0  # seconds before the deadline at which a model call stops waiting or retrying
+TRANSCRIBE_BUDGET = 60.0  # seconds for one up-front transcription with its retries (recorded calls: p99 27 s, max 36 s)
 SOURCE_OF_TRUTH = "/AGENTS.md"  # docs/ARENA_DOCS.md: it names the other operator files
 STATUS = re.compile(r"(?mi)^status:\s*(\S+)")  # a ticket's front matter (docs/ARENA_DOCS.md, ticket tasks)
 SCAN_NOTE = "[text of the scanned image, read for you; cite the image by its path]\n"
@@ -113,6 +113,19 @@ def in_folders(path: str, folders: frozenset[str]):
     return str(PurePosixPath(path).parent) in folders
 
 
+class Deadline(Frozen):
+    """When every task must be submitted (epoch seconds). The loops hurry before it; ``mcnulty run`` submits the
+    fallback for every open task at it."""
+
+    end: float
+
+    def left(self):
+        return self.end - time.time()
+
+
+NO_DEADLINE = Deadline(end=math.inf)
+
+
 @dataclass(frozen=True, slots=True)
 class Transcripts:
     """Image transcripts of one run by file hash, shared by its tasks: an image that every task has (a standing order
@@ -120,20 +133,27 @@ class Transcripts:
     image."""
 
     texts: dict[str, str] = field(default_factory=dict[str, str])
+    failed: set[str] = field(default_factory=set[str])  # images whose call failed: never tried again in this run
     locks: dict[str, threading.Lock] = field(default_factory=dict[str, threading.Lock])
     lock: threading.Lock = field(default_factory=threading.Lock)
 
-    def read(self, rec: Recorder, llm: OpenRouterClient, sha: str, url: str):
-        """The transcript, from the cache or one vision call; None when the call fails (the note stays)."""
+    def read(self, rec: Recorder, llm: OpenRouterClient, sha: str, url: str, budget: float = TRANSCRIBE_BUDGET):
+        """The transcript, from the cache or one vision call; None when the call fails (the note stays). A failure is
+        kept, so the tasks waiting on the same image do not repeat a slow failing call one after another (audit2 Z3).
+        """
         with self.lock:
             image_lock = self.locks.setdefault(sha, threading.Lock())
         with image_lock:
+            if sha in self.failed:
+                return None
             if sha not in self.texts:
                 try:
-                    self.texts[sha] = llm.describe_image(rec, url, TRANSCRIBE, max_tokens=1500).strip()
+                    text = llm.describe_image(rec, url, TRANSCRIBE, max_tokens=1500, budget=budget)
                 except LLMError as e:
                     rec.log(ToolFailed(tool="transcribe", error=ErrorInfo.from_exception(e)))
+                    self.failed.add(sha)
                     return None
+                self.texts[sha] = text.strip()
             return self.texts[sha]
 
 
@@ -144,13 +164,15 @@ def transcribe(
     blobs: BlobCache,
     paths: Iterable[str],
     transcripts: Transcripts,
+    deadline: Deadline,
 ):
     """The text of the images among ``paths`` (path -> transcript), read with the vision model before the loop."""
     found: dict[str, str] = {}
     for path in paths:
         data = blobs.get(files[path])
         url = image_url(data, path) if data is not None else None
-        text = transcripts.read(rec, llm, files[path], url) if url is not None else None
+        budget = min(TRANSCRIBE_BUDGET, deadline.left() - LAST_CALL_LEFT)  # the task keeps its time to answer
+        text = transcripts.read(rec, llm, files[path], url, budget) if url is not None and budget > 1.0 else None
         if text is not None:
             found[path] = text
     return found
@@ -182,19 +204,6 @@ def blob_text(blobs: BlobCache, files: dict[str, str], path: str):
         return data.decode("utf-8") if data is not None else ""
     except UnicodeDecodeError:
         return ""
-
-
-class Deadline(Frozen):
-    """When every task must be submitted (epoch seconds). The loops hurry before it; ``mcnulty run`` submits the
-    fallback for every open task at it."""
-
-    end: float
-
-    def left(self):
-        return self.end - time.time()
-
-
-NO_DEADLINE = Deadline(end=math.inf)
 
 
 def ticket_head(ticket: str):
@@ -272,7 +281,7 @@ class TaskFiles(Frozen):
             history={p: t for p, t in tickets.items() if closed(t)},
             operator=tuple(names),
             images={p: t for p, t in transcripts.items() if p not in operator and p not in tickets},
-            records={p: line_records(text(p)) for p in files if p.endswith(".csv")},
+            records={p: line_records(blob_text(blobs, files, p)) for p in files if p.endswith(".csv")},  # whole file
         )
 
     @property
@@ -329,9 +338,7 @@ class Tools:
                 return ScriptRun(output=self.classify(rec, ClassifyArgs.model_validate_json(arguments)))
         except ValidationError as e:
             return ScriptRun(output=f"error in the arguments of {name}: {e}")
-        except BudgetExhausted:
-            raise
-        except (OSError, LLMError) as e:
+        except (OSError, LLMError) as e:  # also the spend cap: the next chat call stops, and the loop keeps its best
             rec.log(ToolFailed(tool=name, error=ErrorInfo.from_exception(e)))
             return ScriptRun(output=f"error: {name} failed ({type(e).__name__}); try again or work without it")
         return ScriptRun(output=f"error: no tool named {name}")
@@ -350,7 +357,7 @@ def solve(
     """``transcripts``: the run's image transcripts, shared by its tasks (a fresh cache when None)."""
     folders = queue_folders(task.instruction, files)
     images = [*scans_to_read(files, folders), *task_images(task.instruction, files), *named_images(files, blobs)]
-    scans = transcribe(rec, llm, files, blobs, dict.fromkeys(images), transcripts or Transcripts())
+    scans = transcribe(rec, llm, files, blobs, dict.fromkeys(images), transcripts or Transcripts(), deadline)
     task_files = TaskFiles.load(files, blobs, folders, scans)
     box = TaskSandbox.create(rec, pool, task.task_id, files, blobs)
     try:

@@ -174,10 +174,11 @@ def check_citations(sources: list[Source], answer: JsonValue, root: Path = WORKS
         kept.append(source)
         if source.locators:
             texts.append(unit.casefold())
-    notes = [f"{s} does not exist (check the path and the locator; text(path) shows them)" for s in gone if not kept]
     missing = [v for v in values if not any(v in t for t in texts)][:HINT_VALUES]
     found = table_rows(missing, root)
     added = list(dict.fromkeys(rows[0] for rows in found.values() if len(rows) == 1 and rows[0] not in kept))
+    fixed = bool(kept or added)  # a citation remains: a missing unit is left out with no send-back
+    notes = [f"{s} does not exist (check the path and the locator; text(path) shows them)" for s in gone if not fixed]
     hints = [(v, rows) for v, rows in found.items() if len(rows) > 1]
     if hints:
         listed = "\n".join(f"  {v}: " + ", ".join(str(s) for s in rows) for v, rows in hints)
@@ -186,9 +187,9 @@ def check_citations(sources: list[Source], answer: JsonValue, root: Path = WORKS
             f"{head}\n{listed}\ncite each row your answer used (lookup tables too); leave out rows it did not use"
         )
     return Checked(
-        sources=(*kept, *added) if kept or added else tuple(gone),
+        sources=(*kept, *added) if fixed else tuple(gone),
         added=tuple(added),
-        dropped=tuple(gone) if kept else (),
+        dropped=tuple(gone) if fixed else (),
         notes=tuple(notes),
     )
 

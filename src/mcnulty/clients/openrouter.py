@@ -364,10 +364,12 @@ class OpenRouterClient:
         self.tracker.add(MAIN_MODEL, response.usage)
         return response
 
-    def describe_image(self, rec: Recorder, data_url: str, question: str, max_tokens: int = 700):
-        """One vision call on an image passed as a base64 data URL."""
+    def describe_image(
+        self, rec: Recorder, data_url: str, question: str, max_tokens: int = 700, budget: float = BUDGET
+    ):
+        """One vision call on an image passed as a base64 data URL; ``budget``: seconds for all attempts."""
         message = UserMessage(content=(TextPart(text=question), ImagePart(image_url=ImageUrl(url=data_url))))
-        return self.chat(rec, (message,), max_tokens=max_tokens).choices[0].message.content or ""
+        return self.chat(rec, (message,), max_tokens=max_tokens, budget=budget).choices[0].message.content or ""
 
     def decide(self, rec: Recorder, state: JsonValue, questions: dict[str, JevQuestion], budget: float = BUDGET):
         """Ask Jev typed questions about ``state``; returns ``{name: JevAnswer}``. Keep ``state`` under ~32 KB."""

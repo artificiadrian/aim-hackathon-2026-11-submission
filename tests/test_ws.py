@@ -181,6 +181,16 @@ def test_submit_cites_the_one_row_that_holds_an_answer_value_and_asks_when_sever
     assert f"03:00: {files / 't.csv'}#line=2, {files / 't.csv'}#line=3" in note
 
 
+def test_a_wrong_citation_fixed_in_code_sends_nothing_back(files: Path):
+    """Audit2 S1/K5: the only citation did not exist, the code cited the one row that holds the answer, and still a
+    "does not exist" note cost a send-back call (10-16k tokens)."""
+    wrong = [WsSource(path=str(files / "n.md"), line=99)]
+    checked = check_citations(wrong, ["RQ-2"], root=files)
+    assert [str(s) for s in checked.sources] == [f"{files / 'r.csv'}#record=RQ-2"]
+    assert checked.dropped == tuple(wrong)
+    assert checked.notes == ()
+
+
 def test_the_harness_and_the_kernel_agree_on_the_channel():
     """The harness has its own copy of the wire format (its venv has no ws): both sides must read each other."""
     harness, kernel = socket.socketpair()

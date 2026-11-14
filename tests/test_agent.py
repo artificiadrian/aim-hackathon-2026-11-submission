@@ -2,19 +2,26 @@
 
 import hashlib
 import json
+import time
 from pathlib import Path
+
+import httpx
 
 from mcnulty.agent.actions import Gate
 from mcnulty.agent.citations import fixed_sources, line_records
 from mcnulty.agent.loop import (
+    LAST_CALL_LEFT,
     TRANSCRIBE,
+    Deadline,
     TaskFiles,
+    Transcripts,
     closed,
     named,
     named_images,
     queue_folders,
     task_images,
     ticket_status,
+    transcribe,
 )
 from mcnulty.agent.prompt import (
     OLD_OUTPUT_MAX,
@@ -39,8 +46,9 @@ from mcnulty.agent.submit import (
 )
 from mcnulty.blobs import BlobCache
 from mcnulty.clients.arena import Source
-from mcnulty.clients.openrouter import Message, ToolMessage, UserMessage
+from mcnulty.clients.openrouter import CostTracker, Message, OpenRouterClient, ToolMessage, UserMessage
 from mcnulty.record.events import SandboxRan, Stream
+from mcnulty.record.log import EventLog, Recorder
 
 
 def test_submit_answer_given_as_json_text_becomes_its_value():
@@ -341,3 +349,38 @@ def test_an_answer_with_a_token_value_is_sent_back_once_with_the_reason():
     assert isinstance(check_submit(leaked, final=False, citations_asked=True, rejected_before=False), Accepted)
     named = '{"outcome": "OK", "answer": {"token": "TOK-HUB-16"}, "sources": [{"path": "/a.csv", "record": "R"}]}'
     assert isinstance(check_submit(named, final=False, citations_asked=False, rejected_before=False), Accepted)
+
+
+def test_a_failed_shared_transcript_is_not_tried_again(tmp_path: Path):
+    """Audit2 Z3: every task waits on the lock of the image they share; a failure was not kept, so each waiting task
+    repeated the slow failing call one after another and all workers stood still."""
+    sent: list[httpx.Request] = []
+    http = httpx.Client(transport=httpx.MockTransport(lambda r: sent.append(r) or httpx.Response(400, text="bad")))
+    llm = OpenRouterClient(http=http, base_url="http://x/api/v1", tracker=CostTracker(cap=1.0))
+    rec = Recorder(events=EventLog(run_dir=tmp_path / "run"))
+    blobs = BlobCache(root=tmp_path / "blobs")
+    jpg = b"\xff\xd8\xff\xe0JFIF"
+    files = {"/standing_order.jpg": hashlib.sha256(jpg).hexdigest()}
+    blobs.put(files["/standing_order.jpg"], jpg)
+    shared = Transcripts()
+    soon = Deadline(end=time.time() + 3600)
+    assert transcribe(rec, llm, files, blobs, ["/standing_order.jpg"], shared, soon) == {}
+    tried = len(sent)
+    assert tried >= 1
+    assert transcribe(rec, llm, files, blobs, ["/standing_order.jpg"], shared, soon) == {}  # the next task
+    assert len(sent) == tried
+    late = Deadline(end=time.time() + LAST_CALL_LEFT)  # no time beyond the task's last call: no vision call
+    assert transcribe(rec, llm, files, blobs, ["/standing_order.jpg"], Transcripts(), late) == {}
+    assert len(sent) == tried
+
+
+def test_the_csv_record_map_covers_the_whole_file(tmp_path: Path):
+    """Audit2 L3: the map was built from the text cut at 20,000 characters for the first message, so a line citation
+    after about line 110 of requests.csv stayed a line and earned nothing."""
+    blobs = BlobCache(root=tmp_path)
+    rows = "".join(f"RQ-{i:05d},{'x' * 200}\n" for i in range(2_000))
+    data = f"request_id,detail\n{rows}".encode()
+    files = {"/logs/requests.csv": hashlib.sha256(data).hexdigest()}
+    blobs.put(files["/logs/requests.csv"], data)
+    records = TaskFiles.load(files, blobs).records["/logs/requests.csv"]
+    assert records[2_001] == "RQ-01999"  # the last line, far past the cut
