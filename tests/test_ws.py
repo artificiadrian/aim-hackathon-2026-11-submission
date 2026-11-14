@@ -274,6 +274,10 @@ def test_hints_say_what_to_do_and_stay_quiet_otherwise(files: Path, monkeypatch:
     assert error_hint(KeyError(3), {"df": frame}) is None
     assert code_tip("import subprocess\nsubprocess.run(['grep', '-r', 'x', '/'])") == GREP_TIP
     assert code_tip("hits = grep('x')") is None
+    tip = code_tip('with open("/logs/audit.jsonl") as f:\n    rows = f.readlines()')
+    assert tip is not None
+    assert tip.startswith("tip: table('/logs/audit.jsonl')")
+    assert code_tip("open('/tmp/mine.csv').read()") is None  # the cell's own scratch file
 
 
 def test_tz_localize_on_aware_values_converts(monkeypatch: pytest.MonkeyPatch):

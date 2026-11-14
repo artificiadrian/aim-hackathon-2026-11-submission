@@ -236,6 +236,7 @@ class SandboxRan(Frozen):
     tmp_cleared: bool = False  # /tmp was over its cap after the run and was emptied
     cell: int = 0  # the number of this run in the task's Python session (0: before sessions were recorded)
     restarted: str | None = None  # the session was started again before this run, and why ("idle", "killed by ...")
+    repeat_of: int | None = None  # an earlier cell of the session with the same code (eval A t18 ran one cell 6 times)
 
 
 class ActionJudged(Frozen):

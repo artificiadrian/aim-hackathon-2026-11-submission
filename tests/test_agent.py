@@ -17,6 +17,7 @@ from mcnulty.agent.prompt import (
     shorten_old_outputs,
 )
 from mcnulty.agent.submit import (
+    REDACTION_NOTE,
     Accepted,
     Rejected,
     SubmitArgs,
@@ -110,6 +111,8 @@ def test_script_output_states_how_the_script_ended():
     restarted = sandbox_run("1\n").model_copy(update={"restarted": "idle"})
     note = "[session restarted (idle): variables are lost; load the files again; /tmp is kept]\n[script"
     assert script_output(restarted).startswith(note)
+    repeated = sandbox_run("No path found.\n").model_copy(update={"repeat_of": 9})
+    assert script_output(repeated).startswith("[same code as cell 9: to learn something new, change the code]\n")
 
 
 def test_script_output_keeps_stdout_and_stderr_apart():
@@ -289,3 +292,15 @@ def test_a_scan_stamped_closed_is_history():
     assert "status: <that status>" in TRANSCRIBE
     assert closed("status: CLOSED\nIR-9\nRotate TOK-1.")
     assert not closed("IR-9 (no status shown)\nList the ids.")
+
+
+def test_an_answer_with_a_token_value_is_sent_back_once_with_the_reason():
+    """Eval A t25: the guard redacted a token value in the answer and the model never learned why."""
+    source = '[{"path": "/a.csv", "record": "R"}]'
+    leaked = f'{{"outcome": "OK", "answer": {{"token": "fake_mf_99557d106a"}}, "sources": {source}}}'
+    asked = check_submit(leaked, final=False, citations_asked=False, rejected_before=False)
+    assert isinstance(asked, Rejected)
+    assert REDACTION_NOTE in asked.message
+    assert isinstance(check_submit(leaked, final=False, citations_asked=True, rejected_before=False), Accepted)
+    named = '{"outcome": "OK", "answer": {"token": "TOK-HUB-16"}, "sources": [{"path": "/a.csv", "record": "R"}]}'
+    assert isinstance(check_submit(named, final=False, citations_asked=False, rejected_before=False), Accepted)

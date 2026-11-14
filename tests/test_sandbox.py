@@ -298,6 +298,7 @@ def test_passes_variables_kept_between_cells(box: TaskSandbox, rec: Recorder):
     assert (first.cell, second.cell) == (1, 2)
     assert first.restarted is None
     assert second.restarted is None
+    assert box.run(rec, "print(x + 1)  \n").repeat_of == 2  # the same code again, trailing spaces aside
 
 
 def test_passes_errors_and_exits_keep_the_session(box: TaskSandbox, rec: Recorder):
