@@ -12,6 +12,7 @@ import csv
 import hashlib
 import io
 import json
+import re
 import warnings
 from pathlib import Path
 
@@ -24,6 +25,18 @@ IMAGES = (".png", ".jpg", ".jpeg", ".gif", ".webp")
 CACHE = Path("/tmp/.ws")  # noqa: S108 - the task's own scratch folder inside the sandbox
 UNITS = TypeAdapter(list[Unit])
 JSON: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
+
+
+INVISIBLE = re.compile("[\u200b\u200e\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\U000e0000-\U000e007f]")
+INVISIBLE_NOTE = " [invisible characters removed]"
+
+
+def visible(text: str):
+    """Text without zero-width, direction and tag characters, which can hide words from a reader or split a keyword;
+    marked when any were removed. A byte order mark at the start is removed without a mark."""
+    text = text.removeprefix("\ufeff")
+    cleaned = INVISIBLE.sub("", text)
+    return cleaned if cleaned == text else cleaned + INVISIBLE_NOTE
 
 
 def read_text(path: str):
@@ -114,7 +127,9 @@ def parse(path: str) -> list[Unit]:
     suffix = Path(path).suffix.lower()
     if suffix in IMAGES:
         return []
-    return READERS.get(suffix, line_units)(path)
+    found = READERS.get(suffix, line_units)(path)
+    clean = [(u, tuple(INVISIBLE.sub("", c) for c in u.cells)) for u in found]  # cells: no mark, they are values
+    return [Unit(source=u.source, text=visible(u.text), cells=cells) for u, cells in clean]
 
 
 def units(path: str):

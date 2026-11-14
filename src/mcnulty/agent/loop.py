@@ -16,12 +16,13 @@ from pydantic import ValidationError
 
 from mcnulty.agent.actions import Gate, verified_contacts
 from mcnulty.agent.citations import line_records
+from mcnulty.agent.guards import visible
 from mcnulty.agent.prompt import (
     CUT_REPLY,
-    ENDING,
     LAST_FIX,
     LAST_RETRY,
     LAST_STEP,
+    SUBMIT_SOON,
     SYSTEM,
     USE_A_TOOL,
     first_message,
@@ -32,6 +33,7 @@ from mcnulty.agent.sandbox import SandboxPool, TaskSandbox
 from mcnulty.agent.submit import (
     FALLBACK,
     RUN_PYTHON,
+    SUBMIT,
     TOOLS,
     Accepted,
     Rejected,
@@ -63,6 +65,7 @@ from mcnulty.record.log import Recorder
 
 STEPS = {1: 12, 2: 12, 3: 16}  # model calls per task by level; the last one must submit (L1 tasks also used 12)
 MAX_STEPS = 12  # level not known
+SUBMIT_SOON_LEFT = 2  # steps left when the model is told to submit next
 MAX_TOKENS = 3000  # per model reply
 LAST_CALL_LEFT = 240.0  # seconds before the deadline: the next call is the submit-only last step
 CALL_RESERVE = 60.0  # seconds before the deadline at which a model call stops waiting or retrying
@@ -142,7 +145,7 @@ class TaskFiles(Frozen):
             if data is None:
                 return ""
             try:
-                decoded = data.decode("utf-8")
+                decoded = visible(data.decode("utf-8"))
             except UnicodeDecodeError:
                 return NOT_TEXT
             if len(decoded) > INLINE_MAX:
@@ -187,7 +190,7 @@ class Tools:
         return self.llm.describe_image(rec, url, args.question, max_tokens=1500)
 
     def call(self, rec: Recorder, call: ToolCall):
-        """Run one tool call. A ``submit`` tool call (not offered, but a model may call it) comes back as its
+        """Run one tool call. A ``submit`` tool call (offered only on the retry after the last step) comes back as its
         arguments; a bad call or a failed tool becomes an error text for the model, so the task goes on."""
         name, arguments = call.function.name, call.function.arguments
         try:
@@ -259,7 +262,7 @@ def loop(rec: Recorder, tools: Tools, task: Task, deadline: Deadline) -> Solutio
             reply = tools.llm.chat(
                 rec,
                 shorten_old_outputs(tuple(messages)),
-                tools=(RUN_PYTHON,) if last else TOOLS,
+                tools=(SUBMIT,) if step > budget else (RUN_PYTHON,) if last else TOOLS,
                 max_tokens=MAX_TOKENS,
                 reasoning_effort="none",
                 require_tool=last,
@@ -280,8 +283,9 @@ def loop(rec: Recorder, tools: Tools, task: Task, deadline: Deadline) -> Solutio
         for call in message.tool_calls:
             run = tools.call(rec, call)
             if run.submitted is None:
-                ending = f"\n[{ENDING}]" if step == budget - 2 else ""
-                content = f"[step {step} of {budget}] {run.output}{ending}"  # so the model plans to finish in time
+                content = f"[step {step} of {budget}] {run.output}"  # so the model plans to finish in time
+                if budget - step == SUBMIT_SOON_LEFT:
+                    content += "\n" + SUBMIT_SOON.format(left=budget - step)
                 messages.append(ToolMessage(tool_call_id=call.id, content=content))
                 continue
             match check_submit(run.submitted, final, citations_asked, rejected_before):

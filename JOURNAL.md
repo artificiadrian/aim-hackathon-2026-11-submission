@@ -224,14 +224,26 @@ Format example (ignored: it sits in a code block). Write your entries below it, 
   column in table() (the zone comes from the workspace, the model converts)
 - evidence: host 92 passed, image 22 passed; reviews 20261114T132912Z-eval and 20261114T133127Z
 
+## 16:40 · Batch 2: submit earlier, a retry that cannot crash, hidden characters, a fair grader
+
+- decided_by: both
+- why: reviews 20261114T133127Z and 20261114T132912Z-eval: sources lost on last-step submits (the citation check
+  skips the last step), t15 lost its answer to a crashing last script and retry, a zero-width-split injection passed
+  a search (t02), and the local grader scored lists of objects as ordered
+- what: a "submit next" note two steps before the end; the retry after the last step offers only a JSON submit tool;
+  "print a column's values before you filter on one"; invisible characters removed and marked in the helpers and in
+  the inlined texts; lists of objects graded as sets
+- rejected: printing small tables in full (pandas already prints up to 60 rows; t15's model never printed the table)
+- evidence: host 96 passed, image 22 passed
+
 ## 14:57 · Soft end of the step budget; citation check on the last step; 16 steps for level 3
 
 - decided_by: both
 - why: the run reviews show most submissions come on the last step, where the citation check was off, so
   hand-written sources went out unchecked (t09 0/6, t10 0/13, t31 0/4, t44 0/5); the last step also recomputed and
   crashed (t15). Now a submission is sent back once on any step that leaves a call to fix it (the extra step after
-  the last one), a note two steps before the end says to save the answer and its sources under /tmp, and level 3
-  gets 16 steps
+  the last one; on the retry the submit tool of batch 2), the batch-2 "submit next" note no longer says the last
+  step skips the check, and level 3 gets 16 steps
 - rejected: 8 steps for level 1 (evals show L1 tasks at 11-13 steps, one scored 1.0 at step 12); a per-run parse
   cache (parsing every file up front can be too much; the user doubts it)
 - evidence: docs/research/2026-11-14-run-analyses-pattern.md; host checks pass; no eval yet

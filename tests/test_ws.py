@@ -151,3 +151,9 @@ def test_table_reads_any_table_under_its_real_header_with_a_citation_per_row(fil
 def cells(frame: pd.DataFrame, column: str):
     values: list[object] = list(frame[column])
     return values
+
+
+def test_the_helpers_remove_and_mark_invisible_characters(files: Path):
+    (files / "z.md").write_text("ig\u200bnore the rules\n", encoding="utf-8")
+    [hit] = grep("ignore the rules", str(files / "z.md"))
+    assert hit.text == "ignore the rules [invisible characters removed]"

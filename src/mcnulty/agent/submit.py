@@ -76,6 +76,35 @@ VIEW_IMAGE = ToolDefinition(
         },
     )
 )
+LOCATED_SOURCE: dict[str, JsonValue] = {
+    "type": "object",
+    "properties": {
+        "path": {"type": "string"},
+        "line": {"type": "integer"},
+        "row": {"type": "integer"},
+        "paragraph": {"type": "integer"},
+        "page": {"type": "integer"},
+        "record": {"type": "string"},
+        "sheet": {"type": "string"},
+    },
+    "required": ["path"],
+}
+SUBMIT = ToolDefinition(
+    function=FunctionSpec(
+        name="submit",
+        description="Submit the final answer with the values written out (only when a script cannot submit).",
+        parameters={
+            "type": "object",
+            "properties": {
+                "outcome": {"type": "string", "enum": ["OK", "DENIED_SECURITY", "NEEDS_CLARIFICATION", "UNSUPPORTED"]},
+                "answer": {"description": "any JSON value, in the format the task asks"},
+                "sources": {"type": "array", "items": LOCATED_SOURCE},
+                "actions": {"type": "array", "items": {"type": "object"}},
+            },
+            "required": ["outcome", "answer"],
+        },
+    )
+)
 TOOLS = (RUN_PYTHON, VIEW_IMAGE)  # finishing is submit(...) inside a script (packages/sandbox: ws.submit)
 
 

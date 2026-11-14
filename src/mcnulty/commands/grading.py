@@ -6,7 +6,8 @@ outcome is right. The platform's partial credit is not published, so this is an 
 - scalars match after trimming and ignoring case; numbers match numeric strings ("72" == 72);
 - booleans match only booleans;
 - an object scores the mean of its expected keys; a sorted list scores shared items / all items (Jaccard); an
-  expected list that is not sorted is an order (a timeline, a chain) and scores only when equal;
+  expected list of scalars that is not sorted is an order (a timeline, a chain) and scores only when equal; a list of
+  objects is a set;
 - a source hits when path and locator match, lines within ±2; a transfer cited by another locator does not count;
 - a task graded on what the agent did shows the action as its expected answer (``{"quarantine": [...]}``,
   ``{"action": "send_message", "to": ..., "must_mention": [...]}``): the proposed actions that pass the checks are
@@ -55,7 +56,8 @@ def answer_score(got: JsonValue, want: JsonValue, ordered: bool = True) -> float
     if isinstance(want, list):
         if not isinstance(got, list):
             return 0.0
-        if ordered and want != sorted(want, key=lambda v: str(canonical(v))):  # an order: a timeline, a chain
+        scalars = not any(isinstance(v, dict | list) for v in want)  # a list of objects is a set (rotations, ops)
+        if ordered and scalars and want != sorted(want, key=lambda v: str(canonical(v))):  # a timeline, a chain
             return float([canonical(v) for v in got] == [canonical(v) for v in want])
         got_set, want_set = {canonical(v) for v in got}, {canonical(v) for v in want}
         union = got_set | want_set
