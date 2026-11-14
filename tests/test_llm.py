@@ -30,3 +30,10 @@ def test_a_task_tracker_counts_its_own_spend_under_the_run_cap():
     b.add("m", Usage(cost=0.005))
     assert a.capped
     assert b.capped
+
+
+def test_usage_reads_chat_and_jev_token_counts():
+    """Jev answers with input/output tokens; the record showed 0 for every Jev call (docs/research jev-placement)."""
+    jev = Usage.model_validate({"input_tokens": 476, "output_tokens": 70, "cost": 0.00002})
+    chat = Usage.model_validate({"prompt_tokens": 9, "completion_tokens": 3})
+    assert (jev.prompt_tokens, jev.completion_tokens, chat.prompt_tokens) == (476, 70, 9)

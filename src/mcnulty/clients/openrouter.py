@@ -10,7 +10,7 @@ from dataclasses import dataclass, field, replace
 from typing import Annotated, ClassVar, Literal
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, JsonValue, ValidationError
 
 from mcnulty.clients.http import header, retry_after
 from mcnulty.frozen import Frozen
@@ -196,8 +196,10 @@ class JevAnswer(Reply):
 
 # --- responses ----------------------------------------------------------------------------------------
 class Usage(Reply):
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
+    """Token counts and cost; chat replies say prompt/completion tokens, Jev says input/output tokens."""
+
+    prompt_tokens: int = Field(default=0, validation_alias=AliasChoices("prompt_tokens", "input_tokens"))
+    completion_tokens: int = Field(default=0, validation_alias=AliasChoices("completion_tokens", "output_tokens"))
     cost: float = 0.0
 
 
