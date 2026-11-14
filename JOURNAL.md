@@ -64,3 +64,10 @@ Format example (ignored: it sits in a code block). Write your entries below it, 
 - why: the final runs on an unseen incident with new wording; code fitted to our 26 dev families can be free but wrong, and a wrong answer scores 0. Small generic capabilities (typed parsing, search, table query, one agent loop, generic guards) carry over
 - rejected: per-family deterministic solvers and a dev-phrasing router (prior knowledge that breaks on the final)
 - evidence: docs/research/2026-11-14-data-task-families.md (rules and formats change per seed); docs/design.md
+
+## 12:00 · Code mode on a real filesystem, sandbox in Docker
+
+- decided_by: both
+- why: the experiment showed Gemma writes working Python (59/63 scripts ran) and fails on loop friction; a real filesystem with plain Python and pandas removes the helper API the model tripped on; chroot + second user in the same Docker image isolates scripts from our keys and behaves the same locally and in the final
+- rejected: a `ws` helper API (all failed scripts bypassed it), native macOS sandboxing (no chroot, differs from the final), plain-text views of binary files (maybe later, decide with data)
+- evidence: docs/research/2026-11-14-code-mode-experiment.md (4/11 correct, $0.0073 per task); docs/plan.md
