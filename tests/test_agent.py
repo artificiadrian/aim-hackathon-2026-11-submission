@@ -7,7 +7,15 @@ from pathlib import Path
 from mcnulty.agent.actions import Gate
 from mcnulty.agent.citations import fixed_sources, line_records
 from mcnulty.agent.loop import TaskFiles, closed, named, queue_folders
-from mcnulty.agent.prompt import OUTPUT_MAX, SYSTEM, file_tree, first_message, script_output, shorten_old_outputs
+from mcnulty.agent.prompt import (
+    OLD_OUTPUT_MAX,
+    OUTPUT_MAX,
+    SYSTEM,
+    file_tree,
+    first_message,
+    script_output,
+    shorten_old_outputs,
+)
 from mcnulty.agent.submit import (
     Accepted,
     Rejected,
@@ -44,12 +52,15 @@ def test_file_tree_lists_small_folders_and_counts_large_ones():
 
 
 def test_old_tool_outputs_are_shortened_and_the_latest_kept():
-    long = "x" * 2000
+    long = "".join(f"row {i:04d} | value {i * 7}\n" for i in range(400))
     messages: list[Message] = [UserMessage(content="task")]
     messages += [ToolMessage(tool_call_id=str(i), content=long) for i in range(3)]
     contents = [m.content for m in shorten_old_outputs(tuple(messages))]
     assert isinstance(contents[1], str)
-    assert len(contents[1]) < 700
+    kept, note = contents[1].split("\n[... older output shortened")
+    assert len(kept) <= OLD_OUTPUT_MAX
+    assert long.startswith(kept + "\n")  # whole lines only: a cut row would read as a wrong value
+    assert "still in your session's variables" in note
     assert contents[2:] == [long, long]
     shorts = [*messages, *(ToolMessage(tool_call_id=f"s{i}", content="error") for i in range(2))]
     kept = [m.content for m in shorten_old_outputs(tuple(shorts))]

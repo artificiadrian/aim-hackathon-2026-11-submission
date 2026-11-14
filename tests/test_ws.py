@@ -278,3 +278,22 @@ def test_tz_localize_on_aware_values_converts(monkeypatch: pytest.MonkeyPatch):
     assert aware.dt.tz_localize("UTC").dt.strftime("%H:%M").tolist() == ["02:00"]
     naive = pd.Series(pd.to_datetime(["2026-11-14T03:00:00"]))
     assert naive.dt.tz_localize("Europe/Berlin").dt.tz_convert("UTC").dt.strftime("%H:%M").tolist() == ["02:00"]
+
+
+def test_sources_sort_among_strings_and_table_index_is_the_file_line(files: Path, monkeypatch: pytest.MonkeyPatch):
+    mixed = [WsSource(path="/b.csv", line=3), "/a.csv#line=9", WsSource(path="/a.csv", line=2)]
+    assert [str(x) for x in sorted(mixed)] == ["/a.csv#line=2", "/a.csv#line=9", "/b.csv#line=3"]
+    board = table(str(files / "a.jsonl"))
+    assert board.index.name == "line"
+    assert board.index.tolist() == [1, 2]
+    assert board.loc[2, "agent"] == "devops-07"
+    monkeypatch.setattr(pd, "read_table", pd.read_table)  # each restored after the test
+    monkeypatch.setattr(pd, "read_csv", pd.read_csv)
+    monkeypatch.setattr(pd, "read_excel", pd.read_excel)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType] - xlrd
+    monkeypatch.setattr(pd, "read_json", pd.read_json)
+    monkeypatch.setattr(ws.tables, "SCRATCH", files / "scratch")
+    (files / "changes.md").write_text("| id | change |\n|---|---|\n| CHG-1 | revoke |\n")
+    ws.tables.route_pandas()
+    routed = pd.read_table(str(files / "changes.md"), sep="|")
+    assert routed["change"].tolist() == ["revoke"]
+    assert routed.index.tolist() == [3]

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import cast
 
 from ws.formats import JSON, TABLE_ROW, units
+from ws.models import Source
 
 SOURCE_COLUMN = "_source"
 TABLE_FORMATS = "csv, jsonl, json, xlsx, ods and markdown tables"
@@ -20,6 +21,7 @@ def table(path: str, sheet: str | None = None):
     import pandas as pd
 
     rows: list[dict[str, object]] = []
+    places: list[Source] = []  # each row's citation, typed
     headers: dict[str | None, list[str]] = {}
     for unit in units(path):
         where = unit.source
@@ -34,6 +36,7 @@ def table(path: str, sheet: str | None = None):
                 continue
             if isinstance(value, dict):
                 rows.append({**value, SOURCE_COLUMN: where})
+                places.append(where)
             continue
         if where.sheet not in headers:
             if len([c for c in unit.cells if c.strip()]) >= 2:
@@ -44,12 +47,28 @@ def table(path: str, sheet: str | None = None):
         if where.sheet is not None and sheet is None:
             row["_sheet"] = where.sheet
         rows.append(row | {SOURCE_COLUMN: where})
+        places.append(where)
     names = list(dict.fromkeys(name for row in rows for name in row))
     kept = (SOURCE_COLUMN, "_sheet")
     columns = {n: [r.get(n) for r in rows] if n in kept else typed_column([r.get(n) for r in rows]) for n in names}
     if not rows:
         print(f"table: no rows in {path}: no header row with two or more cells ({TABLE_FORMATS})", file=sys.stderr)
-    return pd.DataFrame(columns)
+    frame = pd.DataFrame(columns)
+    numbered = file_index(places)
+    if numbered is not None:
+        frame.index = pd.Index(numbered[1], name=numbered[0])
+    return frame
+
+
+def file_index(places: list[Source]):
+    """The file's own numbers as the frame's index: ``line`` (text, jsonl, markdown, csv cited by line), or ``row`` of
+    a one-sheet spreadsheet. A printed index is then the locator (eval 20261114T144031Z, t25 cited index 699 for line
+    700). None when the rows have no single kind of number (csv cited by record, several sheets)."""
+    if places and all(p.line is not None for p in places):
+        return "line", [p.line for p in places]
+    if places and all(p.row is not None for p in places) and len({p.sheet for p in places}) == 1:
+        return "row", [p.row for p in places]
+    return None
 
 
 def number(value: object):
@@ -74,7 +93,8 @@ def typed_column(values: list[object]):
     return ["" if v is None else v for v in values]
 
 
-TABLE_FILES = (".csv", ".jsonl", ".json", ".xlsx", ".xlsm", ".ods")
+TABLE_FILES = (".csv", ".jsonl", ".json", ".xlsx", ".xlsm", ".ods", ".md")
+SEPARATOR_KEYWORDS = frozenset({"sep", "delimiter"})  # table() finds a markdown table's cells itself
 SCRATCH = Path("/tmp")  # noqa: S108 - the sandbox's scratch folder: files a cell wrote itself go to pandas
 ROUTED_KEYWORDS = frozenset({"sheet_name", "header", "skiprows", "lines", "encoding", "engine"})
 
@@ -83,9 +103,12 @@ def workspace_table(path: object, args: tuple[object, ...], keywords: dict[str, 
     """The workspace path a pandas reader call should read with ``table()``; None when it must go to pandas: a file
     object, a file under /tmp (the cell's own), another format, more positional arguments, or a keyword that changes
     what is read (``usecols``, ``dtype``, ``sheet_name=None``, ...)."""
-    if not isinstance(path, str | Path) or args or not set(keywords) <= ROUTED_KEYWORDS:
+    if not isinstance(path, str | Path) or args:
         return None
     file = Path("/", path)
+    allowed = ROUTED_KEYWORDS | SEPARATOR_KEYWORDS if file.suffix.lower() == ".md" else ROUTED_KEYWORDS
+    if not set(keywords) <= allowed:
+        return None
     if keywords.get("sheet_name", 0) is None or file.suffix.lower() not in TABLE_FILES:
         return None
     if not file.is_file() or SCRATCH in file.parents:
@@ -124,7 +147,7 @@ def route_pandas():
 
         return read
 
-    for name in ("read_csv", "read_excel", "read_json"):
+    for name in ("read_csv", "read_table", "read_excel", "read_json"):
         setattr(pd, name, routed(name))
 
 

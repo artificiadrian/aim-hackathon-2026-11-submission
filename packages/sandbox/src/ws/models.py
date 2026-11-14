@@ -55,6 +55,14 @@ class Source(BaseModel):
         """Short in printed lists too (``print(cite(...))``), not every field with ``=None``."""
         return str(self)
 
+    def __lt__(self, other: object):
+        """Sorts by its printed form, also among strings (``sorted(set(...))`` on mixed values failed: eval
+        20261114T144031Z, t06)."""
+        return str(self) < str(other)
+
+    def __gt__(self, other: object):
+        return str(self) > str(other)
+
     @classmethod
     def parse(cls, text: str):
         """A citation written as text: the exact form ``/a.csv#record=R-7``, and the loose forms models write:

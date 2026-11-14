@@ -256,8 +256,9 @@ def check_submit(arguments: str, final: bool, citations_asked: bool, rejected_be
     if problems and not citations_asked and not final:
         listed = "\n".join(f"- {p}" for p in problems)
         message = (
-            f"not submitted yet; the citations need a look:\n{listed}\nFix them and submit again (submitting the "
-            "same again keeps them)."
+            f"not submitted yet; the citations need a look:\n{listed}\nFix them from your session's variables "
+            '(sources=list(rows["_source"]), hits, cite(path, value)) and submit again; submitting the same again '
+            "keeps them."
         )
         return Rejected(message=message, asked_citations=True, args=args)
     return Accepted(args=args)

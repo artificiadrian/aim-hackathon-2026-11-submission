@@ -10,7 +10,7 @@ from mcnulty.record.events import SandboxRan, Stream
 OUTPUT_MAX = 6000  # characters of a script's stdout the model sees (head and tail)
 STDERR_MAX = 1500  # characters of stderr (the tail, where the traceback is)
 REPEATS_KEPT = 2  # a stderr line seen more often is shown once, with a count
-OLD_OUTPUT_MAX = 500  # characters kept of older outputs; the full text stays in the record
+OLD_OUTPUT_MAX = 1500  # characters kept of older outputs, cut at a line end; the full text stays in the record
 KEEP_FULL = 2  # the latest long tool outputs stay whole (short ones are never shortened, so they do not count)
 FOLDER_LIST_MAX = 12  # a folder with more files is shown as counts per file type
 
@@ -86,17 +86,21 @@ outcome OK. Forms:
 """
 
 LAST_STEP = (
-    "This is your last step: run one short script that only calls submit(...) with your best answer, the values "
-    "written out or loaded from /tmp. No new computation: if this script fails, the task gets no answer."
+    "This is your last step: run one short script that calls submit(...) with your best answer, built from the "
+    'variables your session already holds, e.g. submit(outcome="OK", answer=answer, sources=list(rows["_source"])). '
+    "Keep it to the submit call, so that it surely runs."
 )
 LAST_RETRY = (
-    "Your last script did not submit, so the task has no answer yet. Run a short script that only calls submit(...) "
-    "with your best answer (values loaded from /tmp or written out). If scripts keep failing, call the submit tool "
-    "instead with the values written out: outcome, answer, sources (each {path, and its line, record, sheet and row, "
-    "paragraph or page}), and actions if the task asks for any."
+    "Your last script did not submit, so the task has no answer yet. Run a short script that calls submit(...) with "
+    "your best answer, built from the variables your session already holds (or loaded from /tmp). If scripts keep "
+    "failing, call the submit tool with the values written out: outcome, answer, sources (each {path, and its line, "
+    "record, sheet and row, paragraph or page}), and actions if the task asks for any."
 )
-SUBMIT_SOON = "[{left} steps left: submit in the next step (compute, check and submit in one script).]"
-LAST_FIX = "This is your very last call: submit again with the fixes above, the values written out."
+SUBMIT_SOON = (
+    "[{left} steps left: in the next step, compute, check and submit in one script, with the answer and the sources "
+    'built from the variables you already have (sources=list(rows["_source"]), hits, cite(...)).]'
+)
+LAST_FIX = "This is your very last call: submit again with the fixes above, built from your session variables."
 USE_A_TOOL = "Use a tool: run_python to work and to finish (call submit(...) in a script), view_image for images."
 CUT_REPLY = (
     "not run: your reply was cut at the token limit, so this call may be incomplete. Write a shorter script: save "
@@ -210,7 +214,11 @@ def shorten_old_outputs(messages: tuple[Message, ...]):
     shortened: list[Message] = []
     for i, m in enumerate(messages):
         if i in old and isinstance(m, ToolMessage) and len(m.content) > OLD_OUTPUT_MAX:
-            note = f"\n[... older output shortened from {len(m.content)} characters; run the code again if needed]"
-            m = m.model_copy(update={"content": m.content[:OLD_OUTPUT_MAX] + note})
+            kept = m.content[:OLD_OUTPUT_MAX].rsplit("\n", 1)[0]  # whole lines: a cut row reads as a wrong value
+            note = (
+                f"\n[... older output shortened from {len(m.content)} characters; the values are still in your "
+                "session's variables]"
+            )
+            m = m.model_copy(update={"content": kept + note})
         shortened.append(m)
     return tuple(shortened)
