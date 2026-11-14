@@ -12,9 +12,9 @@ import pytest
 
 from mcnulty.arena import BlobCache
 from mcnulty.recorder import EventLog, Recorder
-from mcnulty.sandbox import IMAGE, TaskSandbox
+from mcnulty.sandbox import SITECUSTOMIZE, TaskSandbox
 
-pytestmark = pytest.mark.skipif(not IMAGE.exists(), reason="the sandbox runs only inside the Docker image")
+pytestmark = pytest.mark.skipif(not SITECUSTOMIZE.exists(), reason="the sandbox runs only inside the Docker image")
 CSV = b"id,actor,records\nR-1,ext,5\nR-2,int,7\n"
 
 
@@ -79,11 +79,12 @@ def test_catches_writes_outside_scratch(box: TaskSandbox, rec: Recorder, code: s
 
 def test_catches_no_keys_no_host_files_and_second_user(box: TaskSandbox, rec: Recorder, monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-must-not-leak")
-    code = "import os; print(os.getuid(), sorted(os.environ), os.path.exists('/app'), os.path.exists('/proc/1'))"
+    paths = "'/app', '/proc/1', '/usr/local/bin/uv', '/sandbox'"
+    code = f"import os; print(os.getuid(), sorted(os.environ), [os.path.exists(p) for p in ({paths})])"
     out = run_ok(box, rec, code)
     assert out.startswith("10001 ")
     assert "OPENROUTER" not in out
-    assert out.endswith("False False")
+    assert out.endswith("[False, False, False, False]")
     assert os.environ["OPENROUTER_API_KEY"] == "sk-or-must-not-leak"
 
 
@@ -104,3 +105,10 @@ def test_catches_runaway_code(box: TaskSandbox, rec: Recorder):
     assert "MemoryError" in memory.stderr
     big = box.run(rec, "open('/tmp/big', 'wb').write(b'0' * 100_000_000)")
     assert big.exit_code != 0
+
+
+def test_passes_the_harness_keeps_its_network():
+    """The network block is in the system Python only; the harness's venv does not load it."""
+    import sys
+
+    assert "sitecustomize" not in sys.modules

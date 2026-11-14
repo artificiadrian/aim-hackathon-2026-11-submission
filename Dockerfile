@@ -7,20 +7,17 @@
 # Test it locally:
 #   docker build -t mcnulty . && docker run --rm --env-file .env -e ARENA_RUN_KIND=dev mcnulty --tasks t01
 
-# --- sandbox: the root filesystem that model-written code runs in (src/mcnulty/sandbox.py) ---------------------
-FROM python:3.12-slim-bookworm AS sandbox
+FROM python:3.12-slim-bookworm
 COPY --from=ghcr.io/astral-sh/uv:0.9.11 /uv /usr/local/bin/uv
+
+# The sandbox libraries go into the system Python. The harness has its own /app/.venv, which does not see them, and
+# at start src/mcnulty/sandbox.py copies this root filesystem (without /app, uv, ...) as the sandbox's root.
 RUN uv pip install --system --no-cache \
         pandas==3.1.1 numpy==2.5.4 openpyxl==3.1.5 odfpy==1.4.1 python-docx==1.2.0 pypdf==6.20.0 \
         pillow==13.0.0 tzdata==2026.6 pyyaml==6.0.3 \
-    && rm -rf /usr/local/bin/uv /usr/local/bin/pip* /usr/local/lib/python3.12/site-packages/pip* /root/.cache \
+    && rm -rf /usr/local/bin/pip* /usr/local/lib/python3.12/site-packages/pip* /root/.cache \
     && python -c "import pandas, openpyxl, odf, docx, pypdf, PIL, yaml, zoneinfo; zoneinfo.ZoneInfo('Europe/Berlin')"
 COPY sandbox/sitecustomize.py /usr/local/lib/python3.12/site-packages/sitecustomize.py
-
-# --- harness ---------------------------------------------------------------------------------------------------
-FROM python:3.12-slim-bookworm
-COPY --from=ghcr.io/astral-sh/uv:0.9.11 /uv /usr/local/bin/uv
-COPY --from=sandbox / /sandbox/image
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

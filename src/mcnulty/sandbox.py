@@ -2,9 +2,10 @@
 
 Layout in the container:
 
-- ``/sandbox/image``: the sandbox root filesystem (Python 3.12, pandas, openpyxl, ...), built by the Dockerfile.
-- ``/sandbox/base``: a copy of it in the container's writable layer, made once per container. Docker's overlay
-  filesystem copies a file up on every hard link, so linking from the image would write 320 MB per task.
+- ``/sandbox/base``: a copy of the container's own root filesystem (Python 3.12 with pandas, openpyxl, ... from the
+  Dockerfile) without the harness, its keys' process data and uv: everything except ``EXCLUDED``. Made once per
+  container in the writable layer: Docker's overlay filesystem copies a file up on every hard link, so linking from
+  the image would write 320 MB per task.
 - ``/sandbox/tasks/<task>``: one root per task, hard links to ``base`` (0.1 s, 4 MB) plus the task's files at their
   workspace paths. The code sees ``/AGENTS.md``, ``/logs/...`` as plain files.
 
@@ -24,8 +25,10 @@ from pathlib import Path
 from mcnulty.arena import BlobCache
 from mcnulty.recorder import Frozen, Recorder, SandboxRan
 
-IMAGE = Path("/sandbox/image")
+SITECUSTOMIZE = Path("/usr/local/lib/python3.12/site-packages/sitecustomize.py")  # only in the Docker image
 BASE = Path("/sandbox/base")
+EXCLUDED = frozenset({"app", "sandbox", "proc", "sys", "dev", "tmp", "root", "home", "run", "mnt", "media", "boot"})
+NOT_IN_SANDBOX = ("usr/local/bin/uv",)
 TASKS = Path("/sandbox/tasks")
 UID = 10001
 TIMEOUT = 30.0  # seconds, wall clock
@@ -50,7 +53,7 @@ BASE_LOCK = threading.Lock()
 
 class SandboxUnavailable(RuntimeError):
     def __init__(self):
-        super().__init__(f"no {IMAGE}: the sandbox runs only inside the Docker image (see AGENTS.md, Commands)")
+        super().__init__("the sandbox runs only inside the Docker image (see AGENTS.md, Commands)")
 
 
 class SandboxResult(Frozen):
@@ -62,15 +65,21 @@ class SandboxResult(Frozen):
 
 
 def ensure_base():
-    """Copy the image's sandbox root into the writable layer, once per container."""
+    """Copy the container's root filesystem, without ``EXCLUDED``, into the writable layer, once per container."""
     with BASE_LOCK:
         if BASE.exists():
             return
-        if not IMAGE.exists():
+        if not SITECUSTOMIZE.exists():
             raise SandboxUnavailable
         partial = BASE.with_name("base.partial")
         shutil.rmtree(partial, ignore_errors=True)
-        subprocess.run(["/bin/cp", "-a", str(IMAGE), str(partial)], check=True)  # noqa: S603
+        partial.mkdir(parents=True)
+        top = sorted(str(p) for p in Path("/").iterdir() if p.name not in EXCLUDED)
+        subprocess.run(["/bin/cp", "-a", *top, str(partial)], check=True)  # noqa: S603
+        for name in NOT_IN_SANDBOX:
+            (partial / name).unlink(missing_ok=True)
+        (partial / "tmp").mkdir()
+        (partial / "tmp").chmod(0o1777)
         partial.rename(BASE)
 
 
