@@ -2,7 +2,7 @@
 
 from pydantic import JsonValue
 
-from mcnulty.agent.actions import Containment, RotateToken, SendMessage, VettedAction
+from mcnulty.agent.actions import Containment, QuarantineAgent, RotateToken, SendMessage, VettedAction
 from mcnulty.agent.submit import Solution
 from mcnulty.clients.arena import Source, Submission, TaskStatus
 from mcnulty.commands.grading import answer_score, grade
@@ -54,3 +54,29 @@ def test_grade_compares_actions_with_an_action_shaped_answer():
         expected_answer={"to": "dpo@x.example", "incident": "INC-1", "records_affected": 42, "detected_at": "07:00"},
     )
     assert grade(solution, notice).answer_score == 0.75  # detected_at is not in the body
+
+
+def test_answer_booleans_and_orders_are_not_loose():
+    """Review TT4: True == 1.0 in Python; an unsorted expected list is an order (a timeline)."""
+    assert answer_score(True, 1) == 0.0
+    assert answer_score(True, True) == 1.0
+    assert answer_score(["C", "A", "B"], ["C", "A", "B"]) == 1.0
+    assert answer_score(["A", "B", "C"], ["C", "A", "B"]) == 0.0
+    assert answer_score(["B", "A"], ["A", "B"]) == 1.0  # sorted: a set
+
+
+def test_grade_reads_a_single_quarantine_and_numbers_with_separators():
+    op = QuarantineAgent(op="quarantine_agent", agent="devops-07")
+    quarantine = Containment(tool="containment", ops=(op,))
+    solution = Solution(
+        submission=Submission(outcome="OK", answer="done"), actions=(VettedAction(action=quarantine, findings=()),)
+    )
+    want: JsonValue = {"action": "quarantine_agent", "agent": "devops-07"}
+    assert grade(solution, TaskStatus(task_id="t", expected_outcome="OK", expected_answer=want)).score == 1.0
+    message = SendMessage(tool="send_message", to="dpo@x.example", subject="s", body="INC-1: 1,610 records")
+    mail = Solution(
+        submission=Submission(outcome="OK", answer=1610), actions=(VettedAction(action=message, findings=()),)
+    )
+    notice: JsonValue = {"action": "send_message", "to": "dpo@x.example", "must_mention": ["INC-1", 1610, "x"]}
+    graded = grade(mail, TaskStatus(task_id="t", expected_outcome="OK", expected_answer=notice))
+    assert graded.answer_score == (1 + 1 + 2 / 3) / 3  # each mentioned item counts

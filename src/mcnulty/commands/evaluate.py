@@ -70,20 +70,30 @@ def run_eval(rec: Recorder, llm: OpenRouterClient, blobs: BlobCache, saved: Save
     def work(task_id: str):
         task = next(t for t in saved.run.tasks if t.task_id == task_id)
         task_rec = rec.for_task(task_id)
+        task_llm = llm.for_task()
         t0 = time.time()
         try:
-            solution = solve(task_rec, llm, task, saved.files(task_id), blobs)
+            solution = solve(task_rec, task_llm, task, saved.files(task_id), blobs)
         except BudgetExhausted:
             solution = FALLBACK
         except Exception as e:  # one task must never stop the evaluation
             task_rec.log(TaskCrashed.from_exception(e))
             solution = FALLBACK
-        scored = grade(solution, saved.expected(task_id))
+        spent = task_llm.tracker
+        scored = grade(solution, saved.expected(task_id)).model_copy(
+            update={
+                "steps": solution.steps,
+                "calls": spent.calls,
+                "prompt_tokens": spent.prompt_tokens,
+                "cost_usd": round(spent.total, 6),
+            }
+        )
         task_rec.log(scored)
         line = (
             f"{task_id} L{task.level} {scored.outcome}/{scored.expected_outcome}",
             f"answer={scored.answer_score:.2f} sources={scored.sources_hit}/{scored.sources_expected}",
-            f"score={scored.score:.2f} {time.time() - t0:.0f}s ${llm.tracker.total:.4f}",
+            f"score={scored.score:.2f} {time.time() - t0:.0f}s steps={solution.steps} calls={spent.calls}",
+            f"${spent.total:.4f} (run ${llm.tracker.total:.4f})",
         )
         print(" ".join(line))
         return task_id, scored

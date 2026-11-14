@@ -19,3 +19,14 @@ def test_spend_cap_blocks_the_next_call(tmp_path: Path):
     with pytest.raises(BudgetExhausted):
         llm.chat(rec, ())
     assert sent == []
+
+
+def test_a_task_tracker_counts_its_own_spend_under_the_run_cap():
+    run = CostTracker(cap=0.01)
+    a, b = run.child(), run.child()
+    a.add("m", Usage(prompt_tokens=100, cost=0.006))
+    assert (a.total, b.total, run.total, run.calls) == (0.006, 0.0, 0.006, 1)
+    assert not b.capped
+    b.add("m", Usage(cost=0.005))
+    assert a.capped
+    assert b.capped

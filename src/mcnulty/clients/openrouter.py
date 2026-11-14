@@ -218,9 +218,11 @@ class JevResponse(Reply):
 
 # --- cost ---------------------------------------------------------------------------------------------
 class CostTracker(BaseModel):
-    """Thread-safe tally of model spend in this process, with an optional hard cap in USD."""
+    """Thread-safe tally of model spend, with an optional hard cap in USD. A child (one task) adds to its parent too,
+    and the parent's cap stops it."""
 
     cap: float | None = None
+    parent: "CostTracker | None" = None
     total: float = 0.0
     calls: int = 0
     prompt_tokens: int = 0
@@ -235,10 +237,15 @@ class CostTracker(BaseModel):
             self.prompt_tokens += usage.prompt_tokens
             self.completion_tokens += usage.completion_tokens
             self.by_model[model] = self.by_model.get(model, 0.0) + usage.cost
+        if self.parent is not None:
+            self.parent.add(model, usage)
 
     @property
-    def capped(self):
-        return self.cap is not None and self.total >= self.cap
+    def capped(self) -> bool:  # recursive
+        return (self.cap is not None and self.total >= self.cap) or (self.parent is not None and self.parent.capped)
+
+    def child(self):
+        return CostTracker(parent=self)
 
 
 # --- client -------------------------------------------------------------------------------------------
@@ -259,6 +266,10 @@ class OpenRouterClient(BaseModel):
             },
         )
         return cls(http=http, base_url=settings.openrouter_base_url.rstrip("/"), tracker=tracker)
+
+    def for_task(self):
+        """The same client with its own tracker for one task (spend per task), under this client's cap."""
+        return self.model_copy(update={"tracker": self.tracker.child()})
 
     @property
     def jev_url(self):

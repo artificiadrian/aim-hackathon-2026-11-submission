@@ -174,6 +174,10 @@ class TaskScored(Frozen):
     sources_hit: int
     sources_expected: int
     score: float
+    steps: int = 0  # model steps of the loop
+    calls: int = 0  # model calls, vision included
+    prompt_tokens: int = 0
+    cost_usd: float = 0.0
 
 
 class RunFinished(Frozen):

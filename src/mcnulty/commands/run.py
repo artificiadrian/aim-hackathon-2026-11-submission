@@ -155,7 +155,7 @@ def run_tasks(settings: Settings, args: RunArgs, started: float):
 
     def solved(task: Task, task_rec: Recorder):
         try:
-            return solve(task_rec, llm, task, manifest_files.get(task.task_id, {}), arena.cache, deadline)
+            return solve(task_rec, llm.for_task(), task, manifest_files.get(task.task_id, {}), arena.cache, deadline)
         except BudgetExhausted:
             return FALLBACK
         except Exception as e:
