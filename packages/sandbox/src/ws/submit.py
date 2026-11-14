@@ -6,13 +6,14 @@ import datetime
 import json
 import os
 from collections.abc import Callable, Iterable
+from pathlib import Path
 from typing import cast
 
 from pydantic import BaseModel, JsonValue, ValidationError
 
-from ws.files import read, resolve
-from ws.formats import JSON
-from ws.models import Hit, Source
+from ws.files import TABLES, files_under, read, resolve
+from ws.formats import JSON, units
+from ws.models import Hit, Source, Unit
 
 
 class NotJson(TypeError):
@@ -92,9 +93,52 @@ def answer_values(answer: JsonValue) -> list[str]:  # recursive
     return [text] if len(text) >= 2 else []
 
 
-def citation_notes(sources: list[Source], answer: JsonValue):
-    """What is wrong with the citations, checked against the files: units that do not exist, and none of the cited
-    units holding any value of the answer. Empty when all is fine."""
+HINT_VALUES = 20  # answer values looked up in the tables when no cited unit holds them
+HINT_ROWS = 3  # a value in more rows of one file than this is not a lookup: no hint for that file
+
+
+def cells_of(unit: Unit):
+    """The cell values of a table row (csv, xlsx, ods) or the top-level values of a JSON object (json, jsonl)."""
+    if unit.cells:
+        return {c.strip().casefold() for c in unit.cells}
+    try:
+        value = JSON.validate_json(unit.text)
+    except ValueError:
+        return set[str]()
+    if not isinstance(value, dict):
+        return set[str]()
+    return {str(v).strip().casefold() for v in value.values() if not isinstance(v, dict | list)}
+
+
+def table_rows(values: list[str], root: Path):
+    """For each value: the table rows (at most ``HINT_ROWS`` per file) that hold it as a whole cell."""
+    found: dict[str, list[Source]] = {v: [] for v in values}
+    for file in files_under(root):
+        if file.suffix.lower() not in (*TABLES, ".json"):
+            continue
+        try:
+            rows = units(str(file))
+        except Exception:  # noqa: S112 - an unreadable file gives no hint
+            continue
+        per_file: dict[str, list[Source]] = {v: [] for v in values}
+        for unit in rows:
+            held = cells_of(unit)
+            for v in values:
+                if v in held:
+                    per_file[v].append(resolve(unit.source))
+        for v, sources in per_file.items():
+            if 0 < len(sources) <= HINT_ROWS:
+                found[v] += sources
+    return found
+
+
+WORKSPACE = Path("/")
+
+
+def citation_notes(sources: list[Source], answer: JsonValue, root: Path = WORKSPACE):
+    """What is wrong with the citations, checked against the files: units that do not exist, and answer values that
+    no cited unit holds but a table row does (a lookup table the answer used and did not cite, or a wrong row).
+    Values found in no table (counts, computed values) are not reported. Empty when all is fine."""
     notes: list[str] = []
     texts: list[str] = []
     for source in sources:
@@ -103,9 +147,15 @@ def citation_notes(sources: list[Source], answer: JsonValue):
             notes.append(f"{source} does not exist (check the path and the locator; text(path) shows them)")
         elif source.locators:
             texts.append(unit.casefold())
-    values = answer_values(answer)
-    if values and texts and not any(v in t for v in values for t in texts):
-        notes.append("none of the cited units holds any value of the answer: cite the units the answer comes from")
+    values = list(dict.fromkeys(answer_values(answer)))
+    missing = [v for v in values if not any(v in t for t in texts)][:HINT_VALUES]
+    hints = [(v, rows) for v, rows in table_rows(missing, root).items() if rows]
+    if hints:
+        listed = "\n".join(f"  {v}: " + ", ".join(str(s) for s in rows) for v, rows in hints)
+        head = "answer values that no cited unit holds, and the table rows that hold them:"
+        notes.append(
+            f"{head}\n{listed}\ncite each row your answer used (lookup tables too); leave out rows it did not use"
+        )
     return notes
 
 

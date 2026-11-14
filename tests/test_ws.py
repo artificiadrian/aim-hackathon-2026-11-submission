@@ -84,13 +84,11 @@ def test_submit_checks_citations_against_the_files(files: Path):
     cited, notes = as_sources([hits, f"{files / 'x.json'} id=X-2", str(files / "n.md") + "#line=99", 42])
     assert [str(s) for s in cited[:2]] == [f"{files / 'a.jsonl'}#line=2", f"{files / 'x.json'}#record=X-2"]
     assert notes == ["not a citation: 42"]
-    problems = citation_notes(cited, ["devops-07"])
+    problems = citation_notes(cited, ["devops-07"], root=files)
     assert problems == [
         f"{files / 'n.md'}#line=99 does not exist (check the path and the locator; text(path) shows them)"
     ]
-    assert citation_notes(cited[:1], ["nowhere-99"]) == [
-        "none of the cited units holds any value of the answer: cite the units the answer comes from"
-    ]
+    assert citation_notes(cited[:1], ["nowhere-99"], root=files) == []  # in no table: a computed value, no hint
     assert read(cited[0]) == '{"agent": "devops-07"}'
     assert resolve(WsSource(path=str(files / "a.jsonl"), record="X")) == WsSource(
         path=str(files / "a.jsonl"), record="X"
@@ -157,3 +155,12 @@ def test_the_helpers_remove_and_mark_invisible_characters(files: Path):
     (files / "z.md").write_text("ig\u200bnore the rules\n", encoding="utf-8")
     [hit] = grep("ignore the rules", str(files / "z.md"))
     assert hit.text == "ignore the rules [invisible characters removed]"
+
+
+def test_submit_names_the_uncited_table_rows_that_hold_answer_values(files: Path):
+    """Eval 13:58, t06: the answer's tokens came from a lookup table the model never cited (1 of 5 sources)."""
+    cited = [WsSource(path=str(files / "n.md"), line=3)]
+    [note] = citation_notes(cited, ["RQ-2", "devops-07", "total-3"], root=files)
+    assert f"rq-2: {files / 'r.csv'}#record=RQ-2" in note
+    assert "devops-07:" not in note  # held by a cited unit
+    assert "total-3" not in note  # in no table

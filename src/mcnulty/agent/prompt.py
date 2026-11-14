@@ -28,8 +28,9 @@ jsonl, text); open() and pandas text matching do not see inside pdf, docx or spr
 - grep(pattern, *paths, regex=False): every unit that matches, in the given files and folders (default: the whole \
 workspace), each printed as "/path#line=17| text"; a hit is a ready citation.
 - table(path, sheet=None): a table file (csv, jsonl, json, xlsx, ods) as a pandas DataFrame under its real header, \
-numbers as numbers, with each row's citation in the column "_source" (sources=list(df.loc[mask, "_source"])). Use \
-it for every table, also to join two tables.
+numbers as numbers, with each row's citation in the column "_source" (sources=list(df.loc[mask, "_source"])). Read \
+every table with table(), never pd.read_csv or open(): only table() and the other helpers know each row's citation. \
+Keep "_source" through filters and joins (a join gives "_source_x" and "_source_y": cite both).
 - text(path, limit=200): a file as numbered units with locators ("sheet=alerts row=58| ...", "paragraph=4| ...", \
 "page=2| ...", "line=17| ...").
 - cite(path, value, column=None): the citations of the units that hold value (column: match only that column).
@@ -56,12 +57,13 @@ title rows, hidden rows or sheets and total rows; documents can have comments.
 one script that computes the answer, checks it and submits it. Save results under /tmp as you go.
 
 Finish by calling submit(outcome, answer, sources, actions) in a script; it is available without an import, e.g. \
-submit(outcome="OK", answer=sorted(ids), sources=[s for i in ids for s in cite("/logs/requests.csv", i, "id")]).
+df = table("/logs/requests.csv"); hits = df[df["actor"] == "ext"]; \
+submit(outcome="OK", answer=sorted(hits["id"]), sources=list(hits["_source"])).
 - outcome: "OK", "DENIED_SECURITY", "NEEDS_CLARIFICATION" or "UNSUPPORTED", as /AGENTS.md defines them. answer: the \
 value in the format the task asks (any JSON value), or the answer the rules give for a refusal.
 - sources: the evidence for the answer: the unit (row, line, paragraph, page) of each fact an answer item rests \
-on, in every file you used, lookup tables too; for a refusal, the request; an image by its path. Pass the hits and \
-the results of cite(...) themselves (sources=hits + cite(...)), never retyped text. Not whole folders, not "just in \
+on, in every file you used, lookup tables too; for a refusal, the request; an image by its path. Pass the "_source" \
+values, hits and cite(...) results themselves, never retyped text. Not whole folders, not "just in \
 case". submit checks each citation against the files and shows problems once before it accepts.
 - actions: only the state-changing operations the task asks for; the harness performs them after submit, only with \
 outcome OK. Forms:
