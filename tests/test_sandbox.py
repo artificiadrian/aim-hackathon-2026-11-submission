@@ -376,3 +376,11 @@ def test_catches_processes_left_after_remove(rec: Recorder, tmp_path: Path):
     sandbox.remove()
     assert uid_processes(uid) == []
     kill_uid(uid)  # nothing left to kill
+
+
+def test_passes_pandas_readers_cite_and_view_image_says_it_is_a_tool(box: TaskSandbox, rec: Recorder):
+    code = "import pandas as pd\nprint(pd.read_csv('/logs/access/requests.csv')['_source'].tolist()[0])"
+    assert run_ok(box, rec, code) == "/logs/access/requests.csv#record=R-1"
+    image = box.run(rec, "view_image('/x.png')")
+    assert "view_image is a tool, not a Python function" in image.stderr.text
+    assert run_ok(box, rec, "import os; grep('R-1'); print(os.listdir('/tmp'))") == "[]"  # no parse cache in /tmp

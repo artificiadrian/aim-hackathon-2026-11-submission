@@ -24,9 +24,21 @@ from ws.models import Cell, CellDone
 from ws.network import block_network
 from ws.shell import sh
 from ws.submit import submit
-from ws.tables import table
+from ws.tables import route_pandas, table
 
-HELPERS = {helper.__name__: helper for helper in (submit, text, table, cite, read, grep, columns, sh)}
+
+class NotPython(RuntimeError):
+    def __init__(self, name: str):
+        super().__init__(f"{name} is a tool, not a Python function: call the {name} tool itself, outside run_python")
+
+
+def view_image(*_args: object, **_keywords: object):
+    """The model's view_image tool called inside a cell (a NameError twice in eval 20261114T135828Z): say what to
+    do instead."""
+    raise NotPython("view_image")
+
+
+HELPERS = {helper.__name__: helper for helper in (submit, text, table, cite, read, grep, columns, sh, view_image)}
 IDLE_EXIT = 75  # no cell came within the idle time: a cell the harness sent at that moment never ran
 
 
@@ -41,6 +53,7 @@ def wide_pandas():
 
     for option, value in (("display.width", 250), ("display.max_columns", 50), ("display.max_colwidth", 80)):
         pd.set_option(option, value)
+    route_pandas()
 
 
 def uses_pandas(code: str):

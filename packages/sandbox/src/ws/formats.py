@@ -9,7 +9,7 @@ Parsed files are cached under ``/tmp/.ws`` (kept for the task), so a second sear
 """
 
 import csv
-import hashlib
+import functools
 import io
 import json
 import re
@@ -22,8 +22,7 @@ from ws.models import Source, Unit
 from ws.untyped import ods_units, odt_units
 
 IMAGES = (".png", ".jpg", ".jpeg", ".gif", ".webp")
-CACHE = Path("/tmp/.ws")  # noqa: S108 - the task's own scratch folder inside the sandbox
-UNITS = TypeAdapter(list[Unit])
+PARSED_MAX = 64  # files kept parsed in memory
 JSON: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 
 
@@ -133,16 +132,13 @@ def parse(path: str) -> list[Unit]:
 
 
 def units(path: str):
-    """The file as citable units (cached per path, size and time of change)."""
+    """The file as citable units, parsed once per path, size and time of change in the task's Python session."""
     stat = Path(path).stat()
-    key = hashlib.sha256(f"{path}\0{stat.st_size}\0{stat.st_mtime_ns}".encode()).hexdigest()
-    cached = CACHE / f"{key}.json"
-    if cached.exists():
-        return UNITS.validate_json(cached.read_bytes())
-    found = parse(path)
-    try:
-        CACHE.mkdir(exist_ok=True)
-        cached.write_bytes(UNITS.dump_json(found))
-    except OSError:  # a full or missing /tmp only costs a second parse
-        pass
-    return found
+    return list(parsed(path, stat.st_size, stat.st_mtime_ns))
+
+
+@functools.lru_cache(maxsize=PARSED_MAX)
+def parsed(path: str, size: int, changed: int):
+    """In memory, not under /tmp: a cache there flooded the model's own ``grep -r`` (eval 20261114T135828Z, t12)."""
+    del size, changed  # only part of the cache key
+    return tuple(parse(path))

@@ -265,3 +265,11 @@ Format example (ignored: it sits in a code block). Write your entries below it, 
 - why: eval 20261114T135828Z: 6 of 9 script failures were NameError on a variable from an earlier script (each script was a new process); every script reloaded its frames
 - rejected: Jupyter kernel (new dependency, more surface); pipes (a print flood or stray child blocks the harness); files in the task root (the task uid could swap them)
 - evidence: docs/ideas/persistent-kernel.md; 31 image tests pass; 12 kernels with pandas: 912 MB
+
+## 18:40 · Per-task spend cap; pandas readers return table(); fixes from the eval review
+
+- decided_by: human
+- why: eval 20261114T135828Z (docs/runs/20261114T135828Z-eval.md): the run cap left 22 of 48 tasks at 0; hand-written sources hit 25 of 67, table()/cite() sources 18 of 19, and the model calls pd.read_* three times as often as table()
+- decided: a task may spend 2 × cap / tasks, then submits its best; pd.read_csv/read_excel/read_json on a workspace table file return table(path) (a hidden hook on purpose: if the next eval shows no gain in sources, remove it and try another way); cite() takes a list of values; the parse cache is in memory, not /tmp/.ws (it flooded the model's grep -r); view_image() in a cell says it is a tool
+- rejected: a reserve per unstarted task (more code), rejecting hand-written sources (costs steps)
+- evidence: next eval on a fresh set

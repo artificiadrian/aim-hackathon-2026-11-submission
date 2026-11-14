@@ -30,7 +30,8 @@ jsonl, text); open() and pandas text matching do not see inside pdf, docx or spr
 workspace), each printed as "/path#line=17| text"; a hit is a ready citation.
 - table(path, sheet=None): a table file (csv, jsonl, json, xlsx, ods) as a pandas DataFrame under its real header, \
 numbers as numbers, with each row's citation in the column "_source" (sources=list(df.loc[mask, "_source"])). Read \
-every table with table(), never pd.read_csv or open(): only table() and the other helpers know each row's citation. \
+every table with table(), never open(): only table() and the other helpers know each row's citation \
+(pd.read_csv, read_excel and read_json on a workspace table file return the same frame as table()). \
 Keep "_source" through filters and joins (a join gives "_source_x" and "_source_y": cite both).
 - text(path, limit=200): a file as numbered units with locators ("sheet=alerts row=58| ...", "paragraph=4| ...", \
 "page=2| ...", "line=17| ...").

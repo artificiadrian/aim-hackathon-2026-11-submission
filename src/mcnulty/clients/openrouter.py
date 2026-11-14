@@ -220,6 +220,9 @@ class JevResponse(Reply):
 
 
 # --- cost ---------------------------------------------------------------------------------------------
+TASK_SHARE = 2.0  # a task's cap: this many times the run cap / number of tasks ($0.0625 at $1.5 and 48 tasks)
+
+
 @dataclass(slots=True)
 class CostTracker:
     """Thread-safe tally of model spend, with an optional hard cap in USD. A child (one task) adds to its parent too,
@@ -248,8 +251,8 @@ class CostTracker:
     def capped(self) -> bool:  # recursive
         return (self.cap is not None and self.total >= self.cap) or (self.parent is not None and self.parent.capped)
 
-    def child(self):
-        return CostTracker(parent=self)
+    def child(self, cap: float | None = None):
+        return CostTracker(cap=cap, parent=self)
 
 
 # --- client -------------------------------------------------------------------------------------------
@@ -270,9 +273,13 @@ class OpenRouterClient:
         )
         return cls(http=http, base_url=settings.openrouter_base_url.rstrip("/"), tracker=tracker)
 
-    def for_task(self):
-        """The same client with its own tracker for one task (spend per task), under this client's cap."""
-        return replace(self, tracker=self.tracker.child())
+    def for_task(self, tasks: int):
+        """The same client with its own tracker for one of ``tasks`` tasks, under this client's cap. A task may spend at
+        most ``TASK_SHARE`` times its fair share of the cap, so one long task cannot use up the budget of the tasks that
+        have not started; at its cap it submits its best answer."""
+        cap = self.tracker.cap
+        share = TASK_SHARE * cap / max(tasks, 1) if cap is not None else None
+        return replace(self, tracker=self.tracker.child(share))
 
     @property
     def jev_url(self):

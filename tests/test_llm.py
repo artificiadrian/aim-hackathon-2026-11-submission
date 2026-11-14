@@ -5,7 +5,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from mcnulty.clients.openrouter import BudgetExhausted, CostTracker, OpenRouterClient, Usage
+from mcnulty.clients.openrouter import TASK_SHARE, BudgetExhausted, CostTracker, OpenRouterClient, Usage
 from mcnulty.record.log import EventLog, Recorder
 
 
@@ -30,6 +30,16 @@ def test_a_task_tracker_counts_its_own_spend_under_the_run_cap():
     b.add("m", Usage(cost=0.005))
     assert a.capped
     assert b.capped
+
+
+def test_a_task_stops_at_twice_its_fair_share():
+    run = CostTracker(cap=1.5)
+    task = run.child(TASK_SHARE * 1.5 / 48)
+    task.add("m", Usage(cost=0.06))
+    assert not task.capped
+    task.add("m", Usage(cost=0.003))
+    assert task.capped
+    assert not run.capped
 
 
 def test_usage_reads_chat_and_jev_token_counts():

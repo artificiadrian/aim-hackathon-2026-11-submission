@@ -73,7 +73,7 @@ def run_eval(rec: Recorder, llm: OpenRouterClient, blobs: BlobCache, saved: Save
     def work(task_id: str):
         task = next(t for t in saved.run.tasks if t.task_id == task_id)
         task_rec = rec.for_task(task_id)
-        task_llm = llm.for_task()
+        task_llm = llm.for_task(len(task_ids))
         t0 = time.time()
         try:
             solution = solve(task_rec, task_llm, task, saved.files(task_id), blobs, pool)

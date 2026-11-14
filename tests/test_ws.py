@@ -8,10 +8,11 @@ import tempfile
 import threading
 from pathlib import Path
 
+import openpyxl
 import pandas as pd
 import pytest
-import ws.formats
 import ws.models
+import ws.tables
 from ws.channel import receive, send
 from ws.files import cite, columns, grep, read, resolve
 from ws.models import Source as WsSource
@@ -23,8 +24,7 @@ from mcnulty.clients.arena import Source
 
 
 @pytest.fixture
-def files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(ws.formats, "CACHE", tmp_path / ".ws")  # the parse cache is the sandbox's /tmp, not the host's
+def files(tmp_path: Path):
     (tmp_path / "r.csv").write_text("request_id,actor\nRQ-1,ext\nRQ-2,int\n", encoding="utf-8")
     (tmp_path / "t.csv").write_text("time,actor\n03:00,ext\n03:00,int\n", encoding="utf-8")
     (tmp_path / "a.jsonl").write_text('{"a": 1}\n{"agent": "devops-07"}\n', encoding="utf-8")
@@ -189,3 +189,33 @@ def test_the_harness_and_the_kernel_agree_on_the_channel():
         assert len(fds) == 3
         send(kernel, ws.models.CellDone(cell=3, exit_code=1).model_dump_json().encode("utf-8"))
         assert receive_answer(harness) == CellDone(cell=3, exit_code=1)
+
+
+def test_cite_takes_a_list_of_values(files: Path):
+    path = str(files / "r.csv")
+    assert [s.record for s in cite(path, ["RQ-1", "RQ-2", "RQ-1"])] == ["RQ-1", "RQ-2"]
+    assert [s.record for s in cite(path, pd.Series(["RQ-2"]))] == ["RQ-2"]
+    assert [s.record for s in cite(path, "RQ-2")] == ["RQ-2"]
+
+
+def test_pandas_readers_on_workspace_tables_return_table(files: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(pd, "read_csv", pd.read_csv)  # each restored after the test
+    monkeypatch.setattr(pd, "read_excel", pd.read_excel)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType] - xlrd
+    monkeypatch.setattr(pd, "read_json", pd.read_json)
+    monkeypatch.setattr(ws.tables, "SCRATCH", files / "scratch")
+    book = openpyxl.Workbook()
+    sheet = book.active
+    assert sheet is not None
+    sheet.title = "Alerts"
+    for row in (["Security alerts export"], [], ["id", "token"], ["A-1", "TOK-1"]):
+        sheet.append(row)
+    book.save(files / "a.xlsx")
+    (files / "scratch").mkdir()
+    (files / "scratch" / "mine.csv").write_text("x\n1\n", encoding="utf-8")
+    ws.tables.route_pandas()
+    alerts = pd.read_excel(files / "a.xlsx")  # pyright: ignore[reportUnknownMemberType] - stubs name xlrd's Book
+    assert list(alerts.columns) == ["id", "token", "_source"]
+    assert alerts["_source"].tolist() == [WsSource(path=str(files / "a.xlsx"), sheet="Alerts", row=4)]
+    assert "_source" in pd.read_csv(str(files / "r.csv")).columns
+    assert "_source" not in pd.read_csv(str(files / "r.csv"), usecols=["actor"]).columns  # other reads: pandas
+    assert "_source" not in pd.read_csv(str(files / "scratch" / "mine.csv")).columns  # the cell's own files

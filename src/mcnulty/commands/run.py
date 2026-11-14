@@ -182,7 +182,7 @@ def run_tasks(settings: Settings, args: RunArgs, started: float):
         except Exception as e:
             task_rec.log(TaskCrashed.from_exception(e))
         try:
-            return solve(task_rec, llm.for_task(), task, files, arena.cache, pool, deadline)
+            return solve(task_rec, llm.for_task(len(tasks)), task, files, arena.cache, pool, deadline)
         except BudgetExhausted:
             return FALLBACK
         except Exception as e:

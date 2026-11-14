@@ -3,9 +3,11 @@
 import re
 import sys
 from collections import Counter
+from collections.abc import Iterable
 from pathlib import Path
+from typing import cast
 
-from ws.formats import CACHE, JSON, read_text, units, visible
+from ws.formats import JSON, read_text, units, visible
 from ws.models import Hit, Source, Unit
 
 SKIPPED = frozenset({"bin", "sbin", "lib", "lib32", "lib64", "libx32", "usr", "etc", "tmp", "proc", "dev"})
@@ -41,12 +43,20 @@ def text(path: str, limit: int | None = 200):
 
 
 def cite(path: str, value: object = None, column: str | None = None):
-    """Sources for the units of ``path`` that contain ``value`` (as text, any case); the whole file when None.
+    """Sources for the units of ``path`` that contain ``value`` (as text, any case); the whole file when None; for a
+    list (tuple, set, pandas Series) of values, the units of each value.
     Units where ``value`` stands as a whole word win (``standby-01`` does not cite ``standby-010``); when there are
     none, units that contain it anywhere. ``column``: in a table (csv, xlsx, ods), only rows whose cell in that column
     equals ``value``; the header is the first row of each sheet that names the column. Never raises for a missing
     column: a citation helper must not stop the submit(...) it is part of; it matches the value anywhere and says so
     on stderr."""
+    values = parts(value)
+    if len(values) != 1 or values[0] is not value:  # several values: the units of each, once
+        return list(dict.fromkeys(source for one in values for source in cite_value(path, one, column)))
+    return cite_value(path, value, column)
+
+
+def cite_value(path: str, value: object, column: str | None):
     found = units(path)
     if value is None or not found:
         return [Source(path=path)]
@@ -69,6 +79,16 @@ def cite(path: str, value: object = None, column: str | None = None):
     return whole or inside
 
 
+def parts(value: object) -> list[object]:  # a script passes any value
+    """A list, tuple, set or pandas/numpy sequence (``df["_source"]``) as its items, anything else as a list of
+    one."""
+    if isinstance(value, list | tuple | set | frozenset):
+        return list(cast("Iterable[object]", value))
+    if type(value).__module__.split(".")[0] in {"numpy", "pandas"} and isinstance(value, Iterable):
+        return list(value)
+    return [value]
+
+
 def column_indexes(found: list[Unit], column: str):
     """Sheet (None for csv) -> index of ``column``, from the first row of each sheet that names it."""
     headers: dict[str | None, int] = {}
@@ -83,7 +103,7 @@ def files_under(root: Path):
     if root.is_file():
         return [root]
     top = root == Path("/")  # a search from / skips the system folders and the scratch folder
-    found = (p for p in root.rglob("*") if p.is_file() and CACHE not in p.parents)  # never the parse cache
+    found = (p for p in root.rglob("*") if p.is_file())
     return sorted(p for p in found if not (top and p.parts[1] in SKIPPED))
 
 

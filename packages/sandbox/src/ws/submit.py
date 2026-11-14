@@ -5,13 +5,13 @@ stdout, so a cut output never loses it); the harness validates the last line (``
 import datetime
 import json
 import os
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
 from pydantic import BaseModel, JsonValue, ValidationError
 
-from ws.files import TABLES, files_under, read, resolve
+from ws.files import TABLES, files_under, parts, read, resolve
 from ws.formats import JSON, units
 from ws.models import Hit, Source, Unit
 
@@ -56,16 +56,6 @@ def as_sources(value: object):
             else:
                 sources.append(resolve(source))
     return sources, notes
-
-
-def parts(value: object) -> list[object]:  # a script passes any value
-    """A list, tuple, set or pandas/numpy sequence (``df["_source"]``) as its items, anything else as a list of
-    one."""
-    if isinstance(value, list | tuple | set | frozenset):
-        return list(cast("Iterable[object]", value))
-    if type(value).__module__.split(".")[0] in {"numpy", "pandas"} and isinstance(value, Iterable):
-        return list(value)
-    return [value]
 
 
 def as_source(value: object):
