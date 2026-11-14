@@ -6,7 +6,11 @@ from pydantic import BaseModel, ConfigDict
 
 
 class Source(BaseModel):
-    """A citation: the path plus the locator the platform grades for that file type (docs/ARENA_DOCS.md)."""
+    """A citation: the path plus the locator the platform grades for that file type (docs/ARENA_DOCS.md).
+
+    One flat model with every locator optional, the platform's own shape. A union (one class per locator kind) would
+    reject impossible mixes; revisit if runs show citations with wrong or mixed locators.
+    """
 
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
 
@@ -33,6 +37,20 @@ class Unit(BaseModel):
     source: Source
     text: str
     cells: tuple[str, ...] = ()  # the cells of a table row, in column order
+
+
+class Shell(BaseModel):
+    """What ``sh`` returns: both streams apart and the exit code (None: timed out)."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
+
+    stdout: str
+    stderr: str
+    exit_code: int | None
+
+    def __str__(self):
+        status = "" if self.exit_code == 0 else f"\n[exit code {self.exit_code}]"
+        return self.stdout + (f"\n[stderr]\n{self.stderr}" if self.stderr else "") + status
 
 
 class Hit(BaseModel):

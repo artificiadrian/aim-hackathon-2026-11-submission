@@ -72,7 +72,7 @@ def submit(outcome: str, answer: object = None, sources: object = (), actions: o
 
 builtins.submit = submit
 
-from ws.search import cite, grep, text  # noqa: E402 - the helpers sit next to this file; after the network hook
+from ws.files import cite, grep, text  # noqa: E402 - the helpers sit next to this file; after the network hook
 from ws.shell import sh  # noqa: E402
 
 for helper in (text, cite, grep, sh):

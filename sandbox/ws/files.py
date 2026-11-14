@@ -1,4 +1,4 @@
-"""Read, cite and search workspace files of any format (``formats``); results are ``models`` types."""
+"""Read, cite and grep workspace files of any format (``formats``); results are ``models`` types."""
 
 import re
 from pathlib import Path
@@ -60,12 +60,13 @@ def files_under(root: Path):
     return sorted(p for p in found if not (top and p.parts[1] in SKIPPED))
 
 
-def grep(pattern: str, path: str = "/", regex: bool = False, limit: int = 100):
-    """Every unit that matches ``pattern`` (any case) in every file under ``path``, any format: a list of ``Hit``
-    (``hit.source`` goes into submit(...)), at most ``limit``."""
+def grep(pattern: str, *paths: str, regex: bool = False, limit: int = 100):
+    """Every unit that matches ``pattern`` (any case) in the given files and folders (default: the whole workspace),
+    any format: a list of ``Hit`` (``hit.source`` goes into submit(...)), at most ``limit``."""
     search = re.compile(pattern if regex else re.escape(pattern), re.IGNORECASE)
+    files = dict.fromkeys(f for path in paths or ("/",) for f in files_under(Path(path)))
     hits: list[Hit] = []
-    for file in files_under(Path(path)):
+    for file in files:
         try:
             found = units(str(file))
         except Exception:  # noqa: S112 - an unreadable file is skipped in a search

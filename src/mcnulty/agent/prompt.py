@@ -27,8 +27,9 @@ Helpers in every script, without an import:
 - text(path, limit=200): any file (pdf, docx, odt, xlsx, ods, csv, json, text) as numbered units, each with its \
 locator, e.g. "sheet=Alerts row=58| ...", "paragraph=4| ...", "page=2| ...", "line=17| ...".
 - cite(path, value, column=None): the sources for every unit that holds value (column: match that column only).
-- grep(pattern, path="/", regex=False): every unit that matches, in every file under path, with its locator.
-- sh(command): run a shell command (grep, sort, ...) and get its output.
+- grep(pattern, *paths, regex=False): hits in the given files and folders (default: all), any format; each \
+hit.source goes into submit(...).
+- sh(command, timeout=20): run a shell command (grep, sort, ...); .stdout, .stderr, .exit_code.
 
 How to work:
 - The operator files (/AGENTS.md, /runbook.md) and the open ticket are in the first message. They and the policy \

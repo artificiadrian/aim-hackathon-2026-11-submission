@@ -260,10 +260,16 @@ def test_passes_the_helpers_cite_every_format_with_its_locator(box: TaskSandbox,
     assert "sheet=Alerts row=5| A-2 | TOK-2 | closed (hidden row)" in shown
     hits = run_ok(box, rec, "print([str(h) for h in grep('devops-07', '/tmp')])")
     assert hits == """['/tmp/a.jsonl line=2| {"agent": "devops-07"}']"""
-    submitted = box.run(rec, "submit('OK', 1, sources=grep('devops-07', '/tmp') + cite('/tmp/a.json', 'X-1'))")
+    submitted = box.run(
+        rec, "submit('OK', 1, sources=grep('devops-07', '/tmp/a.jsonl', '/tmp/a.json') + cite('/tmp/a.json', 'X-1'))"
+    )
     assert submitted.submitted is not None
     assert json.loads(submitted.submitted)["sources"] == [
         {"path": "/tmp/a.jsonl", "line": 2},
         {"path": "/tmp/a.json", "record": "X-1"},
     ]
-    assert run_ok(box, rec, "print(sh('grep -c R- /logs/access/requests.csv').strip())") == "2"
+    assert (
+        run_ok(box, rec, "r = sh('grep -c R- /logs/access/requests.csv'); print(r.stdout.strip(), r.exit_code)")
+        == "2 0"
+    )
+    assert run_ok(box, rec, "print(sh('sleep 5', timeout=0.5).exit_code)") == "None"
