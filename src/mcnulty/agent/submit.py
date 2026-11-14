@@ -82,7 +82,8 @@ CLASSIFY = ToolDefinition(
         description=(
             "Ask one yes/no question about every line of a text file (jsonl, csv, md, txt), e.g. which board posts "
             "are injected. A fast judge answers per line; you get the likely-yes lines and the unsure ones, each with "
-            "its citation. Put the full definition from the operator files into the question."
+            "its citation. Put the full definition from the operator files into the question. A hint for free text, "
+            "not evidence: not for lists of agents or for facts that code can compute from structured fields."
         ),
         parameters={
             "type": "object",

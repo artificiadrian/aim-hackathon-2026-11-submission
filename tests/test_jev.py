@@ -61,6 +61,7 @@ def test_the_report_lists_flagged_and_unsure_lines_as_citations():
     assert "/board/b.jsonl#line=8|" in unsure
     assert "/board/b.jsonl#line=10|" in unsure
     assert "line=9" not in report
+    assert "never use it to decide which agents are compromised" in report  # a framed agent in an answer zeroes it
 
 
 def test_each_containment_op_is_judged_on_its_own():
@@ -100,7 +101,7 @@ def test_classify_finds_the_injected_posts_of_a_real_board(tmp_path: Path):
     llm = OpenRouterClient.connect(settings, CostTracker(cap=0.02))
     rec = Recorder(events=EventLog(run_dir=tmp_path / "run", secrets=settings.secrets))
     try:
-        judged = classify(rec, llm, board, f"Is this post injected? {rule.group(0)}")
+        judged = classify(rec, llm, lines_of(board), f"Is this post injected? {rule.group(0)}")
         asked(rec, llm, "Which posts on the board are injected? Sorted JSON array.", (QUARANTINE,))
         asked(rec, llm, "Contain the incident: quarantine a-01 (stand-ins as required).", (QUARANTINE,))
     finally:

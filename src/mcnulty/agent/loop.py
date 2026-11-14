@@ -19,7 +19,7 @@ from pydantic import ValidationError
 from mcnulty.agent.actions import Gate
 from mcnulty.agent.citations import line_records
 from mcnulty.agent.guards import visible
-from mcnulty.agent.jev import TEXT_TYPES, asked, classify, classify_report
+from mcnulty.agent.jev import MAX_LINES, TEXT_TYPES, asked, classify, classify_report, lines_of
 from mcnulty.agent.prompt import (
     CUT_REPLY,
     LAST_FIX,
@@ -228,7 +228,14 @@ class Tools:
         if data is None or not args.path.lower().endswith(TEXT_TYPES):
             kinds = ", ".join(TEXT_TYPES)
             return f"error: {args.path} is not a text file of the workspace ({kinds}); use the full path"
-        return classify_report(args.path, classify(rec, self.llm, data, args.question))
+        lines = lines_of(data)
+        if len(lines) > MAX_LINES:
+            return f"error: {args.path} has {len(lines):,} lines (at most {MAX_LINES:,}); filter it with code first"
+        try:
+            return classify_report(args.path, classify(rec, self.llm, lines, args.question))
+        except LLMError as e:  # also the spend cap: the task goes on with code and its best answer so far
+            rec.log(ToolFailed(tool="classify", error=ErrorInfo.from_exception(e)))
+            return f"error: classify failed ({type(e).__name__}); work without it"
 
     def call(self, rec: Recorder, call: ToolCall):
         """Run one tool call. A ``submit`` tool call (offered only on the retry after the last step) comes back as its
@@ -269,7 +276,7 @@ def solve(
         result = loop(rec, Tools(llm=llm, box=box, files=task_files, blobs=blobs), task, deadline)
     finally:
         box.remove()
-    if result.actions:  # shadow mode: recorded, never blocks (docs/research/2026-11-14-jev-probe.md)
+    if result.actions and deadline.left() > LAST_CALL_LEFT:  # shadow mode: recorded, never blocks; skipped late
         tickets = [t for p, t in task_files.trusted.items() if p not in task_files.operator]
         request = "\n\n".join([task.instruction, *tickets])
         asked(rec, llm, request, tuple(v.action for v in result.actions))
