@@ -19,8 +19,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 import mock_server  # pyright: ignore[reportImplicitRelativeImport] - given organiser code, loaded from tests/
 
 from mcnulty.blobs import BlobCache
-from mcnulty.clients.arena import ArenaClient, ArenaError, RunMeta
-from mcnulty.commands.run import RunArgs, start_or_resume
+from mcnulty.clients.arena import ArenaClient, ArenaError, RunMeta, Submission
+from mcnulty.commands.run import RunArgs, Submitter, start_or_resume
 from mcnulty.record.events import Envelope, HttpExchange, RunFinished, TaskFinished
 from mcnulty.record.log import EventLog, Recorder
 
@@ -252,3 +252,28 @@ def test_a_failed_run_manifest_falls_back_to_each_task_manifest(tmp_path: Path, 
     )
     manifest = arena.manifest(Recorder(events=EventLog(run_dir=tmp_path / "run")), "r", ["t01", "t02"])
     assert [(t.task_id, t.files) for t in manifest.tasks] == [("t01", {"/AGENTS.md": "a1"})]
+
+
+def test_the_rescue_waits_for_a_submit_on_the_way_before_it_finishes(tmp_path: Path):
+    """Audit2 L9: the rescue called finish while a worker that held an answer was still submitting; the late submit
+    got 409 and the answer was lost."""
+    release = threading.Event()
+
+    def handler(_request: httpx.Request):
+        release.wait(5)
+        return httpx.Response(200, json={"received": True, "task_id": "t01"})
+
+    arena = ArenaClient(
+        http=httpx.Client(base_url="http://arena.test/api/v1", transport=httpx.MockTransport(handler)),
+        cache=BlobCache(root=tmp_path / "blobs"),
+    )
+    rec = Recorder(events=EventLog(run_dir=tmp_path / "run"))
+    submitter = Submitter(arena=arena, run_id="r")
+    assert submitter.claim("t01")
+    worker = threading.Thread(target=submitter.send, args=(rec, "t01", Submission(outcome="UNSUPPORTED", answer=None)))
+    worker.start()
+    assert not submitter.wait_sent(0.2)  # still on the way: finish must wait
+    release.set()
+    assert submitter.wait_sent(5)
+    worker.join()
+    assert not submitter.claim("t01")  # claimed once

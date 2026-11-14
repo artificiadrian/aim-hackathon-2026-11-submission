@@ -40,6 +40,7 @@ from mcnulty.settings import Settings
 
 RUN_SECONDS = 30 * 60  # the final container's limit, counted from the process start
 DEADLINE_MARGIN = 120.0  # seconds before the hard end at which every task must be submitted
+RESCUE_WAIT = 60.0  # seconds the rescue waits for submits already on the way before it finishes the run
 
 
 class RunArgs(FromText):
@@ -67,7 +68,8 @@ class Submitter:
     arena: ArenaClient
     run_id: str
     claimed: set[str] = field(default_factory=set[str])
-    lock: threading.Lock = field(default_factory=threading.Lock)
+    unsent: set[str] = field(default_factory=set[str])  # claimed, submit not yet answered: finish waits for them
+    lock: threading.Condition = field(default_factory=threading.Condition)  # also signals each answered submit
 
     def open(self, task_id: str):
         with self.lock:
@@ -78,9 +80,23 @@ class Submitter:
             if task_id in self.claimed:
                 return False
             self.claimed.add(task_id)
+            self.unsent.add(task_id)
             return True
 
     def send(self, task_rec: Recorder, task_id: str, submission: Submission):
+        try:
+            return self.submit(task_rec, task_id, submission)
+        finally:
+            with self.lock:
+                self.unsent.discard(task_id)
+                self.lock.notify_all()
+
+    def wait_sent(self, seconds: float):
+        """Wait until every claimed task's submit is answered, at most ``seconds``; True when none is left."""
+        with self.lock:
+            return self.lock.wait_for(lambda: not self.unsent, timeout=seconds)
+
+    def submit(self, task_rec: Recorder, task_id: str, submission: Submission):
         try:
             result = self.arena.submit(task_rec, self.run_id, task_id, submission)
         except ArenaError as e:
@@ -165,14 +181,19 @@ def run_tasks(settings: Settings, args: RunArgs, started: float):
         summary = {"status", "tasks_submitted", "tasks_total", "accuracy", "cost_usd", "cost_score", "final_score"}
         print(f"finish: {status.model_dump_json(include=summary)}")
 
+    def fallback(task: Task):
+        _, feedback = submitter.send(rec.for_task(task.task_id), task.task_id, FALLBACK.submission)
+        print(f"{task.task_id} L{task.level} deadline: fallback submitted {' | '.join(feedback)}")
+
     def rescue():
-        """At the deadline: the fallback for every task still open, then finish."""
+        """At the deadline: the fallback for every task still open, all at once; then finish once the workers that
+        already hold an answer have sent it (a submit after finish gets 409 and is lost)."""
         open_tasks = [t for t in tasks if submitter.claim(t.task_id)]
         rec.log(DeadlineReached(open_tasks=tuple(t.task_id for t in open_tasks)))
-        for task in open_tasks:
-            task_rec = rec.for_task(task.task_id)
-            _, feedback = submitter.send(task_rec, task.task_id, FALLBACK.submission)
-            print(f"{task.task_id} L{task.level} deadline: fallback submitted {' | '.join(feedback)}")
+        with ThreadPoolExecutor(max_workers=max(len(open_tasks), 1)) as ex:
+            list(ex.map(fallback, open_tasks))
+        if not submitter.wait_sent(RESCUE_WAIT):
+            print(f"deadline: finish with {len(submitter.unsent)} submits still on the way")
         finish_run()
 
     def solved(task: Task, task_rec: Recorder):
