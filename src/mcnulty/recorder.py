@@ -156,8 +156,45 @@ class TaskCrashed(Frozen):
         return cls(error=ErrorInfo.from_exception(e))
 
 
+class TaskFinished(Frozen):
+    """The end of one task: what was submitted and how it went (the stdout line, as data)."""
+
+    kind: Literal["task_finished"] = "task_finished"
+    outcome: str
+    seconds: float
+    run_cost_usd: float  # model spend of the whole run so far
+    score: float | None
+    feedback: tuple[str, ...]
+
+
+class RunFinished(Frozen):
+    kind: Literal["run_finished"] = "run_finished"
+    cost_usd: float
+    calls: int
+    prompt_tokens: int
+    completion_tokens: int
+    by_model: dict[str, float]
+
+
+class CheckResult(Frozen):
+    """One step of ``mcnulty check``."""
+
+    kind: Literal["check"] = "check"
+    name: str
+    ok: bool
+    detail: str
+
+
 Event = Annotated[
-    CliStarted | HttpExchange | HttpFailed | LlmExchange | LlmFailed | TaskCrashed,
+    CliStarted
+    | HttpExchange
+    | HttpFailed
+    | LlmExchange
+    | LlmFailed
+    | TaskCrashed
+    | TaskFinished
+    | RunFinished
+    | CheckResult,
     Field(discriminator="kind"),
 ]
 

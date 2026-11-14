@@ -4,6 +4,15 @@ Team-10 harness for Harness Arena: a Python agent that solves the Task API's inc
 The platform spec is `docs/ARENA_DOCS.md`; read it before you change Task API or submit code. Research notes are in
 `docs/research/`; start with the synthesis file there.
 
+## Principles
+
+1. **Keep it simple.** Direct code, plain control flow, no global state, no hooks or magic. Pass objects (the
+   `Recorder`, the clients) to where they are needed.
+2. **Type everything.** Every request, response, event, argument and answer is a frozen pydantic model; no raw
+   dicts across function boundaries. No return type hints, no `from __future__ import annotations`.
+3. **Record it all.** Every request, response, decision and failure is a typed event in `events.jsonl`, with as much
+   context as it has (errors via `ErrorInfo.from_exception`). What goes to stdout also goes to the record.
+
 ## Commands
 
 ```bash

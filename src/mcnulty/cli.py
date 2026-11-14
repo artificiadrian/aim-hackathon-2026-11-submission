@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from mcnulty.arena import MAX_NOTE, ArenaClient, ArenaError, RunKind, Task, git_meta
 from mcnulty.live_check import live_check
 from mcnulty.llm import BudgetExhausted, CostTracker, OpenRouterClient
-from mcnulty.recorder import CliStarted, EventLog, Recorder, TaskCrashed
+from mcnulty.recorder import CliStarted, EventLog, Recorder, RunFinished, TaskCrashed, TaskFinished
 from mcnulty.settings import Settings, load_settings
 from mcnulty.solver import FALLBACK, solve
 
@@ -61,22 +61,22 @@ def build_parser(default_kind: str | None):
 
 
 def to_run_args(p: argparse.ArgumentParser, ns: argparse.Namespace):
-    collect = ns.command == "collect"
+    if ns.command == "collect":
+        data = {"kind": "dev", "note": ns.note, "seed": ns.seed, "collect": True}
+    else:
+        data = {
+            "kind": ns.kind,
+            "note": ns.note,
+            "seed": ns.seed,
+            "tasks": [t for t in ns.tasks.split(",") if t],
+            "levels": [int(x) for x in ns.level.split(",") if x],
+            "match": f"(?i){ns.match}" if ns.match else None,  # pydantic compiles it; (?i): ignore case
+            "limit": ns.limit,
+            "parallel": ns.parallel,
+        }
     try:
-        return RunArgs.model_validate(
-            {
-                "kind": "dev" if collect else ns.kind,
-                "note": ns.note,
-                "seed": ns.seed,
-                "tasks": [t for t in getattr(ns, "tasks", "").split(",") if t],
-                "levels": [int(x) for x in getattr(ns, "level", "").split(",") if x],
-                "match": re.compile(ns.match, re.IGNORECASE) if getattr(ns, "match", None) else None,
-                "limit": getattr(ns, "limit", None),
-                "parallel": getattr(ns, "parallel", 12),
-                "collect": collect,
-            }
-        )
-    except (ValidationError, ValueError, re.error) as e:
+        return RunArgs.model_validate(data)
+    except (ValidationError, ValueError) as e:
         p.error(str(e))
 
 
@@ -124,16 +124,26 @@ def run_tasks(settings: Settings, args: RunArgs):
             submission = solve(task_rec, arena, llm, run.run_id, task)
         except BudgetExhausted:
             submission = FALLBACK
-        except Exception as e:
+        except Exception as e:  # one task must never kill the run; always submit something
             task_rec.log(TaskCrashed.from_exception(e))
             submission = FALLBACK
         try:
-            result = " | ".join(arena.submit(task_rec, run.run_id, task.task_id, submission).feedback)
+            result = arena.submit(task_rec, run.run_id, task.task_id, submission)
+            score, feedback = result.score, result.feedback
         except ArenaError as e:
-            result = f"ERROR {e}"
+            task_rec.log(TaskCrashed.from_exception(e))
+            score, feedback = None, (f"submit failed: {e}",)
+        finished = TaskFinished(
+            outcome=submission.outcome,
+            seconds=round(time.time() - t0, 1),
+            run_cost_usd=llm.tracker.total,
+            score=score,
+            feedback=feedback,
+        )
+        task_rec.log(finished)
         # one short line per task: only stdout comes back from the final container
-        cost = llm.tracker.total
-        print(f"{task.task_id} L{task.level} {submission.outcome} {time.time() - t0:.0f}s ${cost:.4f} {result}")
+        head = f"{task.task_id} L{task.level} {submission.outcome} {finished.seconds:.0f}s"
+        print(f"{head} ${finished.run_cost_usd:.4f} {' | '.join(feedback)}")
 
     if not args.collect:
         with ThreadPoolExecutor(max_workers=args.parallel) as ex:
@@ -144,6 +154,15 @@ def run_tasks(settings: Settings, args: RunArgs):
     summary = {"status", "tasks_submitted", "tasks_total", "accuracy", "cost_usd", "cost_score", "final_score"}
     print(f"finish: {finish.model_dump_json(include=summary)}")
     t = llm.tracker
+    rec.log(
+        RunFinished(
+            cost_usd=t.total,
+            calls=t.calls,
+            prompt_tokens=t.prompt_tokens,
+            completion_tokens=t.completion_tokens,
+            by_model=t.by_model,
+        )
+    )
     print(f"local cost ${t.total:.4f} in {t.calls} calls ({t.prompt_tokens} in / {t.completion_tokens} out)")
     return 0
 

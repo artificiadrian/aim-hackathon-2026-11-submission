@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import mock_server
 
 from mcnulty.arena import BlobCache
-from mcnulty.recorder import Envelope, HttpExchange
+from mcnulty.recorder import Envelope, HttpExchange, RunFinished, TaskFinished
 
 FAKE_ARENA_KEY = "arena_testsecret_0123456789"
 
@@ -78,6 +78,10 @@ def test_run_submits_every_task_with_its_task_id(base_url: str, tmp_path: Path):
     _, events, _ = read_events(tmp_path)
     submits = {e.task_id for e in events if isinstance(e.event, HttpExchange) and e.event.path.endswith("/submit")}
     assert submits == {"t01", "t02"}
+    finished = {e.task_id: e.event for e in events if isinstance(e.event, TaskFinished)}
+    assert set(finished) == {"t01", "t02"}
+    assert all(f.outcome == "UNSUPPORTED" and f.feedback for f in finished.values())
+    assert isinstance(events[-1].event, RunFinished)
 
 
 def test_invalid_arguments_start_no_run(base_url: str, tmp_path: Path):

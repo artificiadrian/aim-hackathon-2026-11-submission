@@ -61,6 +61,14 @@ class Source(Frozen):
     paragraph: int | None = None
 
 
+class ToolResult(Open):
+    """A tool-level problem (file not found, bad argument) is ``ok: false`` with an error, not an exception."""
+
+    ok: bool
+    result: JsonValue = None
+    error: str | None = None
+
+
 class Submission(Frozen):
     outcome: Outcome
     answer: JsonValue
@@ -265,8 +273,8 @@ class ArenaClient(BaseModel):
         tool: str,
         args: dict[str, JsonValue],
     ):
-        """``{ok, result}`` or ``{ok: false, error}``: tool-level errors are data, not exceptions."""
-        return self.send(rec, "POST", f"/runs/{run_id}/tasks/{task_id}/tools/{tool}", args).json()
+        response = self.send(rec, "POST", f"/runs/{run_id}/tasks/{task_id}/tools/{tool}", args)
+        return ToolResult.model_validate_json(response.content)
 
     def run_manifest(self, rec: Recorder, run_id: str):
         return RunManifest.model_validate(self.send(rec, "GET", f"/runs/{run_id}/manifest").json())

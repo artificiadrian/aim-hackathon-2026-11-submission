@@ -9,25 +9,21 @@ import time
 from pathlib import Path
 
 from mcnulty.arena import ArenaClient, git_meta
-from mcnulty.llm import CostTracker, OpenRouterClient, PickOne, YesNo
-from mcnulty.recorder import EventLog, Recorder
+from mcnulty.llm import CostTracker, FunctionSpec, OpenRouterClient, PickOne, ToolDefinition, UserMessage, YesNo
+from mcnulty.recorder import CheckResult, EventLog, Recorder
 from mcnulty.settings import Settings
 
-READ_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "read",
-        "description": "Read a file",
-        "parameters": {
-            "type": "object",
-            "properties": {"path": {"type": "string"}},
-            "required": ["path"],
-        },
-    },
-}
+READ_TOOL = ToolDefinition(
+    function=FunctionSpec(
+        name="read",
+        description="Read a file",
+        parameters={"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
+    )
+)
 
 
-def check(name: str, ok: bool, detail: str):
+def check(rec: Recorder, name: str, ok: bool, detail: str):
+    rec.log(CheckResult(name=name, ok=ok, detail=detail))
     print(f"{'ok  ' if ok else 'FAIL'} {name}: {detail}")
     return ok
 
@@ -46,13 +42,14 @@ def live_check(settings: Settings):
     read = arena.call_tool(task_rec, run.run_id, task.task_id, "read", {"path": "/AGENTS.md"})
     results.append(
         check(
+            rec,
             "task api tool",
-            read.get("ok") is True,
+            read.ok,
             f"read /AGENTS.md on {task.task_id}",
         )
     )
     manifest = arena.task_manifest(task_rec, run.run_id, task.task_id)
-    results.append(check("task api manifest", bool(manifest.files), f"{len(manifest.files)} files"))
+    results.append(check(rec, "task api manifest", bool(manifest.files), f"{len(manifest.files)} files"))
     images = sorted(
         (f for f in manifest.files if f.path.endswith((".png", ".jpg"))),
         key=lambda f: f.size or 0,
@@ -60,17 +57,19 @@ def live_check(settings: Settings):
 
     reply = llm.chat(
         task_rec,
-        [{"role": "user", "content": "Read /AGENTS.md using the tool."}],
-        tools=[READ_TOOL],
+        (UserMessage(content="Read /AGENTS.md using the tool."),),
+        tools=(READ_TOOL,),
         max_tokens=200,
         reasoning_effort="none",
     )
-    calls = [c.function.get("name") for c in reply.tool_calls]
+    choice = reply.choices[0]
+    calls = [c.function.name for c in choice.message.tool_calls or ()]
     results.append(
         check(
+            rec,
             "chat tool call",
             calls == ["read"],
-            f"calls={calls} finish={reply.finish_reason} ${reply.usage.cost:.6f}",
+            f"calls={calls} finish={choice.finish_reason} provider={reply.provider} ${reply.usage.cost:.6f}",
         )
     )
 
@@ -84,13 +83,14 @@ def live_check(settings: Settings):
             "Describe this image in one sentence.",
             80,
         )
-        results.append(check("vision", bool(text), f"{image.path}: {text[:80]!r}"))
+        results.append(check(rec, "vision", bool(text), f"{image.path}: {text[:80]!r}"))
     else:
-        results.append(check("vision", False, "no image in the workspace"))
+        results.append(check(rec, "vision", False, "no image in the workspace"))
 
-    vectors = llm.embed(task_rec, ["agent token rotation", "quarantine an agent"])
+    vectors = llm.embed(task_rec, ("agent token rotation", "quarantine an agent"))
     results.append(
         check(
+            rec,
             "embeddings",
             len(vectors) == 2 and len(vectors[0]) > 0,
             f"{len(vectors[0])} dimensions",
@@ -110,6 +110,7 @@ def live_check(settings: Settings):
     )
     results.append(
         check(
+            rec,
             "jev",
             "inj" in answers and "tone" in answers,
             f"{ {k: v.model_dump(exclude_none=True) for k, v in answers.items()} }",
@@ -117,7 +118,7 @@ def live_check(settings: Settings):
     )
 
     finish = arena.finish(rec, run.run_id)
-    results.append(check("task api finish", finish.status == "finished", f"run {run.run_id}"))
+    results.append(check(rec, "task api finish", finish.status == "finished", f"run {run.run_id}"))
     t = llm.tracker
     print(f"cost ${t.total:.6f} in {t.calls} calls {t.by_model}; trace {run_dir}/events.jsonl")
     return 0 if all(results) else 1

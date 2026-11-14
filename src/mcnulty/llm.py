@@ -1,6 +1,7 @@
 """OpenRouter client: chat with tool calling (the fixed small model), vision, embeddings and Jev decisions.
 
-Only three models are allowed at runtime (see AGENTS.md). Every request is logged to a Recorder.
+Only three models are allowed at runtime (see AGENTS.md). Requests and responses are typed models; every exchange is
+logged to a Recorder.
 """
 
 import threading
@@ -8,7 +9,7 @@ import time
 from typing import Annotated, Literal
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, PrivateAttr
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, PrivateAttr, ValidationError
 
 from mcnulty.recorder import ErrorInfo, Frozen, LlmExchange, LlmFailed, Recorder
 from mcnulty.settings import Settings
@@ -16,13 +17,6 @@ from mcnulty.settings import Settings
 MAIN_MODEL = "google/gemma-4-31b-it"
 JEV_MODEL = "typesafe/jev-1.14"
 EMBED_MODEL = "qwen/qwen3-embedding-8b"
-# Where the fixed model runs. In the final the organisers' gateway sets exactly this on every request, so dev runs
-# use it too and their costs match the final.
-PROVIDER = {
-    "order": ["deepinfra/fp8", "crusoe", "novita"],
-    "only": ["deepinfra/fp8", "crusoe", "novita"],
-    "allow_fallbacks": True,
-}
 RETRIES = 5
 
 type ReasoningEffort = Literal["none", "low", "medium", "high"]
@@ -43,49 +37,113 @@ class RetriesExhausted(LLMError):
 
 
 class MalformedReply(LLMError):
-    """A 200 response without the expected content."""
+    """A 200 response that does not parse as the expected model."""
 
 
-class Usage(BaseModel):
+class Reply(BaseModel):
+    """A platform response: tolerate fields OpenRouter adds."""
+
     model_config = ConfigDict(frozen=True, extra="allow")
 
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    cost: float = 0.0
+
+# --- chat messages ------------------------------------------------------------------------------------
+class TextPart(Frozen):
+    type: Literal["text"] = "text"
+    text: str
 
 
-class ToolCall(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="allow")
+class ImageUrl(Frozen):
+    url: str  # data:image/...;base64,...
 
+
+class ImagePart(Frozen):
+    type: Literal["image_url"] = "image_url"
+    image_url: ImageUrl
+
+
+ContentPart = Annotated[TextPart | ImagePart, Field(discriminator="type")]
+
+
+class FunctionCall(Reply):
+    name: str
+    arguments: str  # JSON text, as the model wrote it: parse and validate before use
+
+
+class ToolCall(Reply):
     id: str
-    type: str = "function"
-    function: dict[str, str]  # {"name": ..., "arguments": "<json text>"}
+    type: Literal["function"] = "function"
+    function: FunctionCall
 
 
-class ChatReply(Frozen):
-    content: str | None
-    tool_calls: tuple[ToolCall, ...] = ()
-    finish_reason: str | None
-    usage: Usage
+class SystemMessage(Frozen):
+    role: Literal["system"] = "system"
+    content: str
 
 
-class CostTracker(BaseModel):
-    """Thread-safe tally of model spend in this process."""
+class UserMessage(Frozen):
+    role: Literal["user"] = "user"
+    content: str | tuple[ContentPart, ...]
 
-    total: float = 0.0
-    calls: int = 0
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    by_model: dict[str, float] = Field(default_factory=dict)
-    _lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
 
-    def add(self, model: str, usage: Usage):
-        with self._lock:
-            self.total += usage.cost
-            self.calls += 1
-            self.prompt_tokens += usage.prompt_tokens
-            self.completion_tokens += usage.completion_tokens
-            self.by_model[model] = self.by_model.get(model, 0.0) + usage.cost
+class AssistantMessage(Reply):
+    role: Literal["assistant"] = "assistant"
+    content: str | None = None
+    tool_calls: tuple[ToolCall, ...] | None = None
+
+
+class ToolMessage(Frozen):
+    role: Literal["tool"] = "tool"
+    tool_call_id: str
+    content: str
+
+
+Message = Annotated[SystemMessage | UserMessage | AssistantMessage | ToolMessage, Field(discriminator="role")]
+
+
+class FunctionSpec(Frozen):
+    name: str
+    description: str
+    parameters: dict[str, JsonValue]  # JSON schema of the arguments
+
+
+class ToolDefinition(Frozen):
+    type: Literal["function"] = "function"
+    function: FunctionSpec
+
+
+# --- requests -----------------------------------------------------------------------------------------
+class Provider(Frozen):
+    """Where the fixed model runs. In the final the organisers' gateway sets exactly this on every request, so dev
+    runs use it too and their costs match the final."""
+
+    order: tuple[str, ...] = ("deepinfra/fp8", "crusoe", "novita")
+    only: tuple[str, ...] = ("deepinfra/fp8", "crusoe", "novita")
+    allow_fallbacks: bool = True
+
+
+class Reasoning(Frozen):
+    effort: ReasoningEffort
+
+
+class IncludeUsage(Frozen):
+    include: bool = True  # OpenRouter adds usage.cost
+
+
+class ChatRequest(Frozen):
+    model: str = MAIN_MODEL
+    messages: tuple[Message, ...]
+    max_tokens: int
+    temperature: float
+    usage: IncludeUsage = IncludeUsage()
+    provider: Provider = Provider()
+    reasoning: Reasoning | None = None
+    tools: tuple[ToolDefinition, ...] | None = None
+    tool_choice: Literal["auto"] | None = None
+
+
+class EmbeddingRequest(Frozen):
+    model: str = EMBED_MODEL
+    input: tuple[str, ...]
 
 
 # --- Jev questions and answers ------------------------------------------------------------------------
@@ -115,10 +173,14 @@ class Scale(Frozen):
 JevQuestion = Annotated[YesNo | PickOne | Scale, Field(discriminator="type")]
 
 
-class JevAnswer(BaseModel):
-    """One answer. ``type == "refusal"`` carries no value: treat it as unknown, not as no."""
+class JevRequest(Frozen):
+    model: str = JEV_MODEL
+    state: JsonValue
+    questions: dict[str, JevQuestion]
 
-    model_config = ConfigDict(frozen=True, extra="allow")
+
+class JevAnswer(Reply):
+    """One answer. ``type == "refusal"`` carries no value: treat it as unknown, not as no."""
 
     type: str | None = None
     noul: float | None = None
@@ -131,6 +193,60 @@ class JevAnswer(BaseModel):
         return self.type == "refusal"
 
 
+# --- responses ----------------------------------------------------------------------------------------
+class Usage(Reply):
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    cost: float = 0.0
+
+
+class Choice(Reply):
+    message: AssistantMessage
+    finish_reason: str | None = None
+
+
+class ChatResponse(Reply):
+    choices: tuple[Choice, ...] = Field(min_length=1)
+    usage: Usage = Usage()
+    provider: str | None = None
+
+
+class Embedding(Reply):
+    index: int
+    embedding: tuple[float, ...]
+
+
+class EmbeddingResponse(Reply):
+    data: tuple[Embedding, ...]
+    usage: Usage = Usage()
+
+
+class JevResponse(Reply):
+    answers: dict[str, JevAnswer]
+    usage: Usage = Usage()
+
+
+# --- cost ---------------------------------------------------------------------------------------------
+class CostTracker(BaseModel):
+    """Thread-safe tally of model spend in this process."""
+
+    total: float = 0.0
+    calls: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    by_model: dict[str, float] = Field(default_factory=dict)
+    _lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
+
+    def add(self, model: str, usage: Usage):
+        with self._lock:
+            self.total += usage.cost
+            self.calls += 1
+            self.prompt_tokens += usage.prompt_tokens
+            self.completion_tokens += usage.completion_tokens
+            self.by_model[model] = self.by_model.get(model, 0.0) + usage.cost
+
+
+# --- client -------------------------------------------------------------------------------------------
 class OpenRouterClient(BaseModel):
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
@@ -147,25 +263,16 @@ class OpenRouterClient(BaseModel):
                 "X-Title": "Harness Arena team-10",
             },
         )
-        return cls(
-            http=http,
-            base_url=settings.openrouter_base_url.rstrip("/"),
-            tracker=tracker,
-        )
+        return cls(http=http, base_url=settings.openrouter_base_url.rstrip("/"), tracker=tracker)
 
     @property
     def jev_url(self):
         """Jev is on the same host with ``/v1`` replaced: ``.../api/v1`` -> ``.../api/alpha/decisions``."""
         return f"{self.base_url.removesuffix('/v1')}/alpha/decisions"
 
-    def post(
-        self,
-        rec: Recorder,
-        url: str,
-        body: dict[str, JsonValue],
-        timeout: float = 180.0,
-    ):
-        """POST with retries on network errors, 408, 429, 5xx and 402 + Retry-After (in-flight budget full)."""
+    def post[R: Reply](self, rec: Recorder, url: str, request: Frozen, reply: type[R], timeout: float = 180.0):
+        """POST with retries on network errors, 408, 429, 5xx, 402 + Retry-After and 200 + error body."""
+        body = request.model_dump(mode="json", exclude_none=True)
         last = ""
         for attempt in range(RETRIES + 1):
             wait = 0.0
@@ -178,24 +285,18 @@ class OpenRouterClient(BaseModel):
             else:
                 ms = int((time.time() - t0) * 1000)
                 response = rec.body(r.content, r.headers.get("content-type", ""))
-                rec.log(
-                    LlmExchange(
-                        url=url,
-                        status=r.status_code,
-                        ms=ms,
-                        request=body,
-                        response=response,
-                    )
-                )
+                rec.log(LlmExchange(url=url, status=r.status_code, ms=ms, request=body, response=response))
                 if r.status_code == 200:
-                    data = r.json()
-                    if "error" not in data or "choices" in data or "answers" in data:
-                        return data
-                    last = f"upstream error: {data['error']}"  # OpenRouter sometimes returns 200 + error
+                    try:
+                        return reply.model_validate_json(r.content)
+                    except ValidationError as e:
+                        if b'"error"' not in r.content:
+                            raise MalformedReply(url, 200, r.text[:300]) from e
+                        last = f"upstream error: {r.text[:300]}"  # OpenRouter sometimes returns 200 + error
                 elif r.status_code == 403:
                     raise BudgetExhausted(url, 403, r.text[:300])
                 elif (
-                    r.status_code in (408, 429)
+                    r.status_code in {408, 429}
                     or r.status_code >= 500
                     or (r.status_code == 402 and "retry-after" in r.headers)
                 ):
@@ -210,70 +311,43 @@ class OpenRouterClient(BaseModel):
     def chat(
         self,
         rec: Recorder,
-        messages: list[JsonValue],
+        messages: tuple[Message, ...],
         *,
-        tools: list[JsonValue] | None = None,
-        response_format: JsonValue = None,
+        tools: tuple[ToolDefinition, ...] = (),
         max_tokens: int = 2048,
         temperature: float = 0.0,
         reasoning_effort: ReasoningEffort | None = None,
     ):
         """One chat/completions call on the fixed model. Thinking tokens count against ``max_tokens``."""
-        body: dict[str, JsonValue] = {
-            "model": MAIN_MODEL,
-            "messages": messages,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "usage": {"include": True},
-            "provider": PROVIDER,
-        }
-        if reasoning_effort:
-            body["reasoning"] = {"effort": reasoning_effort}
-        if tools:
-            body["tools"] = tools
-            body["tool_choice"] = "auto"
-        if response_format is not None:
-            body["response_format"] = response_format
-        url = f"{self.base_url}/chat/completions"
-        data = self.post(rec, url, body)
-        if not data.get("choices"):
-            raise MalformedReply(url, 200, str(data)[:300])
-        usage = Usage.model_validate(data.get("usage") or {})
-        self.tracker.add(MAIN_MODEL, usage)
-        choice = data["choices"][0]
-        message = choice["message"]
-        return ChatReply(
-            content=message.get("content"),
-            tool_calls=tuple(ToolCall.model_validate(c) for c in message.get("tool_calls") or ()),
-            finish_reason=choice.get("finish_reason"),
-            usage=usage,
+        request = ChatRequest(
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            reasoning=Reasoning(effort=reasoning_effort) if reasoning_effort else None,
+            tools=tools or None,
+            tool_choice="auto" if tools else None,
         )
+        response = self.post(rec, f"{self.base_url}/chat/completions", request, ChatResponse)
+        self.tracker.add(MAIN_MODEL, response.usage)
+        return response
 
     def describe_image(self, rec: Recorder, data_url: str, question: str, max_tokens: int = 700):
         """One vision call on an image passed as a base64 data URL."""
-        content = [
-            {"type": "text", "text": question},
-            {"type": "image_url", "image_url": {"url": data_url}},
-        ]
-        return self.chat(rec, [{"role": "user", "content": content}], max_tokens=max_tokens).content or ""
+        message = UserMessage(content=(TextPart(text=question), ImagePart(image_url=ImageUrl(url=data_url))))
+        return self.chat(rec, (message,), max_tokens=max_tokens).choices[0].message.content or ""
 
-    def embed(self, rec: Recorder, texts: list[str]):
-        """Embedding vectors for ``texts`` in one request."""
+    def embed(self, rec: Recorder, texts: tuple[str, ...]):
+        """Embedding vectors for ``texts`` in one request, in input order."""
         url = f"{self.base_url}/embeddings"
-        data = self.post(rec, url, {"model": EMBED_MODEL, "input": list(texts)})
-        self.tracker.add(EMBED_MODEL, Usage.model_validate(data.get("usage") or {}))
-        rows = sorted(data["data"], key=lambda d: d["index"])
-        if len(rows) != len(texts):
-            raise MalformedReply(url, 200, {"embeddings_expected": len(texts), "received": len(rows)})
-        return [row["embedding"] for row in rows]
+        response = self.post(rec, url, EmbeddingRequest(input=texts), EmbeddingResponse)
+        self.tracker.add(EMBED_MODEL, response.usage)
+        if len(response.data) != len(texts):
+            raise MalformedReply(url, 200, {"embeddings_expected": len(texts), "received": len(response.data)})
+        return tuple(row.embedding for row in sorted(response.data, key=lambda row: row.index))
 
     def decide(self, rec: Recorder, state: JsonValue, questions: dict[str, JevQuestion]):
         """Ask Jev typed questions about ``state``; returns ``{name: JevAnswer}``. Keep ``state`` under ~32 KB."""
-        body = {
-            "model": JEV_MODEL,
-            "state": state,
-            "questions": {name: q.model_dump(mode="json") for name, q in questions.items()},
-        }
-        data = self.post(rec, self.jev_url, body, timeout=60.0)
-        self.tracker.add(JEV_MODEL, Usage.model_validate(data.get("usage") or {}))
-        return {name: JevAnswer.model_validate(a) for name, a in (data.get("answers") or {}).items()}
+        request = JevRequest(state=state, questions=questions)
+        response = self.post(rec, self.jev_url, request, JevResponse, timeout=60.0)
+        self.tracker.add(JEV_MODEL, response.usage)
+        return response.answers
