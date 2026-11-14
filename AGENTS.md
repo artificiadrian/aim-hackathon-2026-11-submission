@@ -42,6 +42,7 @@ uv run ruff check --fix && uv run ruff format && uv run basedpyright && uv run p
 - The dev key has $15 for the whole day. A full 48-task run costs a large share: ask the user before one. Test on
   subsets and on recorded runs first.
 - Cost is half the score. Prefer local parsing and code over model calls.
+- Every run, experiment or subagent that calls a model has a hard spend cap: stop calling models once it is reached.
 
 ## Runs and records
 
