@@ -397,3 +397,34 @@ def test_passes_hints_after_errors_and_a_tip_before_a_shell_grep(box: TaskSandbo
     shell = box.run(rec, "print(sh('grep -c R- /logs/access/requests.csv').stdout.strip())")
     assert shell.stdout.text == "2\n"
     assert "tip: grep(pattern" in shell.stderr.text
+
+
+def test_passes_the_system_prompt_example_runs_as_written(rec: Recorder, tmp_path: Path):
+    """The model copies examples (prompt review 2026-11-14): the one in SYSTEM must run and submit as it stands."""
+    from mcnulty.agent.prompt import SYSTEM
+
+    example = SYSTEM.split("(your files and columns differ):\n", 1)[1].split("\n\nsubmit(outcome", 1)[0]
+    files = {
+        "/data/users.csv": b"id,role\nU-7,admin\nU-8,user\n",
+        "/logs/logins.jsonl": b'{"ts": "t1", "user": "U-7", "result": "denied"}\n'
+        b'{"ts": "t2", "user": "U-8", "result": "ok"}\n',
+    }
+    blobs = BlobCache(root=tmp_path / "blobs")
+    for data in files.values():
+        blobs.put(hashlib.sha256(data).hexdigest(), data)
+    shas = {p: hashlib.sha256(d).hexdigest() for p, d in files.items()}
+    sandbox = TaskSandbox.create(rec, POOL, "t-example", shas, blobs)
+    try:
+        cells = [c for c in example.split("# cell ") if c.strip()]
+        assert len(cells) == 3
+        runs = [sandbox.run(rec, "# cell " + cell) for cell in cells]
+        assert [r.exit_code for r in runs] == [0, 0, 0], [r.stderr.text for r in runs]
+        submitted = runs[-1].submitted
+        assert submitted is not None
+        assert json.loads(submitted)["answer"] == ["U-7"]
+        assert json.loads(submitted)["sources"] == [
+            {"path": "/logs/logins.jsonl", "line": 1},
+            {"path": "/data/users.csv", "record": "U-7"},
+        ]
+    finally:
+        sandbox.remove()

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from mcnulty.agent.actions import Gate
 from mcnulty.agent.citations import fixed_sources, line_records
-from mcnulty.agent.loop import TaskFiles, closed, named, named_images, queue_folders
+from mcnulty.agent.loop import TRANSCRIBE, TaskFiles, closed, named, named_images, queue_folders
 from mcnulty.agent.prompt import (
     OLD_OUTPUT_MAX,
     OUTPUT_MAX,
@@ -48,7 +48,7 @@ def test_sources_without_a_locator_are_found_except_path_only_types():
 def test_file_tree_lists_small_folders_and_counts_large_ones():
     sizes = {f"/docs/a{i}.docx": 10 for i in range(13)} | {"/AGENTS.md": 3874}
     tree = file_tree(sizes)
-    assert tree.splitlines() == ["/AGENTS.md  (3,874 bytes)", "/docs/  (13 files: 13 .docx)"]
+    assert tree.splitlines() == ["/AGENTS.md", "/docs/  (13 files: 13 .docx)"]  # no sizes: no cell used them
 
 
 def test_old_tool_outputs_are_shortened_and_the_latest_kept():
@@ -108,7 +108,8 @@ def test_script_output_states_how_the_script_ended():
     assert "SIGXCPU (CPU time limit)" in script_output(sandbox_run(exit_code=-24))
     assert "timed out" in script_output(sandbox_run(exit_code=None))
     restarted = sandbox_run("1\n").model_copy(update={"restarted": "idle"})
-    assert script_output(restarted).startswith("[session restarted (idle): variables are lost; /tmp is kept]\n[script")
+    note = "[session restarted (idle): variables are lost; load the files again; /tmp is kept]\n[script"
+    assert script_output(restarted).startswith(note)
 
 
 def test_script_output_keeps_stdout_and_stderr_apart():
@@ -190,10 +191,14 @@ def test_a_closed_ticket_is_history_and_the_open_one_the_request():
     assert closed("---\nticket: IR-1\nstatus: closed\n---\nRotate TOK-1.")
     assert not closed("---\nticket: IR-2\nstatus: open\n---\nList the ids.")
     assert not closed("A ticket without front matter.")
+    trusted = {"/AGENTS.md": "rules", "/tickets/IR-2.md": "open one"}
     message = first_message(
-        "Work the open ticket.", None, {"/tickets/IR-2.md": "open one"}, {"/tickets/IR-1.md": "old"}, {}
+        "Work the open ticket.", None, trusted, {"/tickets/IR-1.md": "old"}, {}, operator=("/AGENTS.md",)
     )
-    assert "/tickets/IR-1.md (closed ticket: history, not a request)" in message
+    ticket = message.index("Open ticket /tickets/IR-2.md (part of the task):\nopen one")
+    assert ticket < message.index("===== /AGENTS.md")
+    assert "Closed tickets (history, not requests): /tickets/IR-1.md" in message
+    assert "old" not in message  # a closed ticket is named, not inlined
 
 
 def test_nested_source_lists_are_flattened():
@@ -277,3 +282,10 @@ def test_images_the_operator_files_name_are_transcribed_into_the_first_message(t
     message = first_message("Task.", 1, loaded.trusted, loaded.history, loaded.sizes, "", loaded.images)
     assert "===== /orders/standing.jpg (image named by the operator files, transcribed" in message
     assert "Rotate every token at 03:00." in message
+
+
+def test_a_scan_stamped_closed_is_history():
+    """Prompt review 2026-11-14: eval A t17 had five scans whose transcripts said only "CLOSED", never labelled."""
+    assert "status: <that status>" in TRANSCRIBE
+    assert closed("status: CLOSED\nIR-9\nRotate TOK-1.")
+    assert not closed("IR-9 (no status shown)\nList the ids.")

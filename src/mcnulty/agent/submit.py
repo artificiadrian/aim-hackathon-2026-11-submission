@@ -58,7 +58,10 @@ FALLBACK = Solution(submission=Submission(outcome="UNSUPPORTED", answer=None))
 RUN_PYTHON = ToolDefinition(
     function=FunctionSpec(
         name="run_python",
-        description="Run a Python 3.12 script in the sandbox; returns what it prints. submit(...) in it finishes.",
+        description=(
+            "Run a Python 3.12 cell in the task's session (variables stay); returns what it prints. submit(...) in "
+            "it finishes."
+        ),
         parameters={"type": "object", "properties": {"code": {"type": "string"}}, "required": ["code"]},
     )
 )
@@ -69,7 +72,7 @@ VIEW_IMAGE = ToolDefinition(
         parameters={
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "workspace path of a png or jpg file"},
+                "path": {"type": "string", "description": "workspace path of a png or jpg file; cite the image by it"},
                 "question": {"type": "string", "description": "what to read or look for; ask for all text verbatim"},
             },
             "required": ["path", "question"],
@@ -82,8 +85,8 @@ CLASSIFY = ToolDefinition(
         description=(
             "Ask one yes/no question about every line of a text file (jsonl, csv, md, txt), e.g. which board posts "
             "are injected. A fast judge answers per line; you get the likely-yes lines and the unsure ones, each with "
-            "its citation. Put the full definition from the operator files into the question. A hint for free text, "
-            "not evidence: not for lists of agents or for facts that code can compute from structured fields."
+            "its citation. Put the full definition from the rules into the question. Use it for free text; compute "
+            "facts from structured fields with code."
         ),
         parameters={
             "type": "object",
@@ -216,7 +219,8 @@ def missing_locators(args: SubmitArgs):
 def missing_locators_message(missing: list[str]):
     return (
         f"these sources have no locator: {', '.join(sorted(set(missing)))}; a file citation earns nothing: cite "
-        "each line, record, row, paragraph or page your answer rests on"
+        'each line, record, row, paragraph or page your answer rests on, e.g. "/fleet/x.csv#record=ID" or '
+        '"/logs/x.jsonl#line=N"'
     )
 
 
