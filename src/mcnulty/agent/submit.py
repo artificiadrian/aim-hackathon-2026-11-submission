@@ -63,7 +63,7 @@ FALLBACK = Solution(submission=Submission(outcome="UNSUPPORTED", answer=None))
 RUN_PYTHON = ToolDefinition(
     function=FunctionSpec(
         name="run_python",
-        description="Run a Python 3.12 script in the sandbox and return what it prints (stdout and stderr).",
+        description="Run a Python 3.12 script in the sandbox; returns what it prints. submit(...) in it finishes.",
         parameters={"type": "object", "properties": {"code": {"type": "string"}}, "required": ["code"]},
     )
 )
@@ -81,53 +81,7 @@ VIEW_IMAGE = ToolDefinition(
         },
     )
 )
-STRING: JsonValue = {"type": "string"}
-INTEGER: JsonValue = {"type": "integer"}
-# Hand-written: the generated schema is 4,600 characters on every call. Pydantic still validates the arguments.
-SUBMIT_SCHEMA: dict[str, JsonValue] = {
-    "type": "object",
-    "properties": {
-        "outcome": {"enum": ["OK", "DENIED_SECURITY", "NEEDS_CLARIFICATION", "UNSUPPORTED"]},
-        "answer": {"description": "any JSON value, in the format the task asks"},
-        "sources": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "path": STRING,
-                    "line": INTEGER,
-                    "record": STRING,
-                    "sheet": STRING,
-                    "row": INTEGER,
-                    "paragraph": INTEGER,
-                    "page": INTEGER,
-                },
-                "required": ["path"],
-            },
-        },
-        "actions": {
-            "type": "array",
-            "description": (
-                'only what the task asks for: {"tool": "containment", "ops": [{"op": "quarantine_agent", "agent", '
-                '"stand_in"?} | {"op": "release_agent", "agent"} | {"op": "revoke_token", "token"} | '
-                '{"op": "rotate_token", "token", "at": "YYYY-MM-DDTHH:00:00Z"} | {"op": "block_domain", "domain"} | '
-                '{"op": "add_note", "text"}]} | '
-                '{"tool": "send_message", "to", "subject", "body"} | '
-                '{"tool": "write", "path": "/drafts/...", "content"}'
-            ),
-            "items": {"type": "object"},
-        },
-    },
-    "required": ["outcome", "answer"],
-}
-SUBMIT = ToolDefinition(
-    function=FunctionSpec(
-        name="submit",
-        description="Finish the task: the outcome, the answer, its sources and the actions the task asks for.",
-        parameters=SUBMIT_SCHEMA,
-    )
-)
-TOOLS = (RUN_PYTHON, VIEW_IMAGE, SUBMIT)
+TOOLS = (RUN_PYTHON, VIEW_IMAGE)  # finishing is submit(...) inside a script (sandbox/sitecustomize.py)
 
 
 class RunPythonArgs(ModelInput):

@@ -5,7 +5,7 @@ are outside Python: chroot, a second user, read-only files, an empty environment
 
 ``submit(...)``: available in every script without an import, so the script that computes an answer can submit it
 with citations built from the rows it used. It writes one JSON line to the file descriptor the harness passes in
-``SUBMIT_FD`` (not stdout, so a cut output never loses it); the harness validates the last line like the submit tool
+``SUBMIT_FD`` (not stdout, so a cut output never loses it); the harness validates the last line
 (``src/mcnulty/agent/submit.py``).
 
 Less noise: pypdf logs a warning per font it cannot map (2.3 MB for the PDFs of one run), which buries the real output.

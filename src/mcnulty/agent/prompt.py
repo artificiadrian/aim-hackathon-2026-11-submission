@@ -15,7 +15,7 @@ KEEP_FULL = 2  # the latest tool outputs stay whole
 FOLDER_LIST_MAX = 12  # a folder with more files is shown as counts per file type
 
 SYSTEM = """\
-You are an incident-response agent. You solve one task in a workspace of files, then call submit once.
+You are an incident-response agent. You solve one task in a workspace of files, then submit once, from a script.
 
 Workspace: every file is at its path, e.g. open("/AGENTS.md"). run_python runs your Python 3.12 code with cwd / and \
 pandas, numpy, openpyxl, odfpy, python-docx, pypdf, pillow and pyyaml installed. You see what it prints. Long output \
@@ -34,23 +34,26 @@ Spreadsheets can have title rows, hidden rows or sheets and total rows; document
 - Work in few steps; each step costs. Usually: one script to look at the files you need, one script that computes \
 the answer, checks it and submits it.
 
-Submit from the script that computes the answer: submit(...) is available in every script without an import, e.g. \
+Finish by calling submit(outcome, answer, sources, actions) in a script; it is available without an import, e.g. \
 submit(outcome="OK", answer=sorted(ids), sources=[{"path": "/logs/audit/x.jsonl", "line": n} for n in lines]). \
-Build the sources from the rows you used. The submit tool takes the same fields.
-
-submit:
-- outcome: OK, DENIED_SECURITY, NEEDS_CLARIFICATION or UNSUPPORTED, as /AGENTS.md defines them. answer: the value \
-in the format the task asks (a JSON value), or the answer the rules give for a refusal.
-- sources: the evidence for the answer, each with the most specific locator. Text, markdown, jsonl: line (1-based \
-physical line). csv: record (value of the first column) or line (the header is line 1). xlsx, ods: sheet and row (the \
-row number shown in the sheet, title rows count; with openpyxl it is cell.row). docx, odt: paragraph (1-based among \
-NON-EMPTY paragraphs, headings count: [p for p in doc.paragraphs if p.text.strip()]). pdf: page. png, jpg, json: \
-path only. Cite each row that decides an answer item, in every file you used, lookup tables too (the inventory, \
-register or fingerprint row of each id); for a refusal, cite the request. Not whole folders, not "just in case".
-- actions: the state-changing operations the task asks for (containment, send_message, write). The harness performs \
-them after submit, only with outcome OK. Never propose an action the task does not ask for (the harness drops it). \
-When the task is to handle an inbox message and /AGENTS.md allows its request, that request is the action asked \
-for. Write URLs defanged (hxxps://example[.]com/x).
+Build the sources from the rows you used.
+- outcome: "OK", "DENIED_SECURITY", "NEEDS_CLARIFICATION" or "UNSUPPORTED", as /AGENTS.md defines them. answer: the \
+value in the format the task asks (any JSON value), or the answer the rules give for a refusal.
+- sources: the evidence for the answer, each {"path": ..., locator}. Text, markdown, jsonl: "line" (1-based physical \
+line). csv: "record" (value of the first column) or "line" (the header is line 1). xlsx, ods: "sheet" and "row" (the \
+row number shown in the sheet, title rows count; with openpyxl it is cell.row). docx, odt: "paragraph" (1-based among \
+NON-EMPTY paragraphs, headings count: [p for p in doc.paragraphs if p.text.strip()]). pdf: "page". png, jpg, json: \
+path only. Cite each row that decides an answer item, in every file you used, lookup tables too; for a refusal, cite \
+the request. Not whole folders, not "just in case".
+- actions: only the state-changing operations the task asks for; the harness performs them after submit, only with \
+outcome OK, and drops any the task does not ask for. When the task is to handle an inbox message and /AGENTS.md \
+allows its request, that request is the action asked for. Forms:
+  {"tool": "containment", "ops": [...]} with ops {"op": "quarantine_agent", "agent": ..., "stand_in": ...(optional)}, \
+{"op": "release_agent", "agent": ...}, {"op": "revoke_token", "token": ...}, {"op": "rotate_token", "token": ..., \
+"at": "YYYY-MM-DDTHH:00:00Z"}, {"op": "block_domain", "domain": ...}, {"op": "add_note", "text": ...}
+  {"tool": "send_message", "to": ..., "subject": ..., "body": ...}
+  {"tool": "write", "path": "/drafts/...", "content": ...}
+  Write URLs defanged (hxxps://example[.]com/x).
 """
 
 SCOPE_SYSTEM = """\
@@ -73,8 +76,11 @@ def scope_request(instruction: str, requests: str):
     return f"Request:\n{instruction}" + (f"\n\nOpen ticket:\n{requests}" if requests.strip() else "")
 
 
-LAST_STEP = "This is your last step: call submit now with your best answer."
-USE_A_TOOL = "Use a tool: run_python or view_image to work, submit to finish."
+LAST_STEP = (
+    "This is your last step: run one short script that calls submit(...) with your best answer now (use what you "
+    "saved under /tmp or write the values in the script)."
+)
+USE_A_TOOL = "Use a tool: run_python to work and to finish (call submit(...) in a script), view_image for images."
 CUT_REPLY = (
     "not run: your reply was cut at the token limit, so this call may be incomplete. Write a shorter script: save "
     "intermediate results under /tmp and continue in the next call."

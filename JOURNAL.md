@@ -136,3 +136,13 @@ Format example (ignored: it sits in a code block). Write your entries below it, 
   verified recipient) stay
 - rejected: regex gate (brittle), no gate (an injected quarantine in an analysis task acts)
 - evidence: not yet measured with the model; the next eval shows the ScopeDecided events
+
+## 15:05 · One way to finish: submit(...) in a script
+
+- decided_by: human
+- why: two ways to finish (tool and builtin) cost a schema on every call, and the tool made the model retype ids and
+  locators; in the stopped eval 6 of 10 tasks already finished from Python
+- decision: tools are run_python and view_image; the last step offers only run_python and asks for one short script
+  that calls submit(...); the action forms are in SYSTEM (drift test against the models)
+- rejected: keep both (schema cost, two paths to test)
+- evidence: tool schemas 5,300 -> 704 characters per call; a crashing last script now falls back (not measured yet)

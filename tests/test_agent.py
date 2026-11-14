@@ -3,9 +3,8 @@
 import json
 
 from mcnulty.agent.citations import fixed_sources, line_records
-from mcnulty.agent.prompt import OUTPUT_MAX, file_tree, script_output, shorten_old_outputs
+from mcnulty.agent.prompt import OUTPUT_MAX, SYSTEM, file_tree, script_output, shorten_old_outputs
 from mcnulty.agent.submit import (
-    SUBMIT_SCHEMA,
     Accepted,
     Rejected,
     SubmitArgs,
@@ -169,13 +168,11 @@ def test_an_inbox_task_cites_its_message():
     assert fixed_sources((), {}, "Which agents leaked tokens?", paths) == ()
 
 
-def test_the_hand_written_submit_schema_matches_the_models():
-    """The schema the model sees is short; pydantic validates. Both must name the same fields and kinds."""
-    schema = json.dumps(SUBMIT_SCHEMA)
+def test_the_prompt_names_every_submit_field_and_action_form():
+    """The model learns the submit(...) fields and action forms from SYSTEM only; pydantic validates them."""
     for field in (*Source.model_fields, *SubmitArgs.model_fields):
-        assert f'"{field}"' in schema, field
-    for op in ("quarantine_agent", "release_agent", "revoke_token", "rotate_token", "block_domain"):
-        assert f'\\"{op}\\"' in schema, op
+        assert f'"{field}"' in SYSTEM or f"{field}:" in SYSTEM, field
+    for op in ("quarantine_agent", "release_agent", "revoke_token", "rotate_token", "block_domain", "add_note"):
+        assert f'"op": "{op}"' in SYSTEM, op
     for tool in ("containment", "send_message", "write"):
-        assert f'\\"{tool}\\"' in schema, tool
-    assert len(schema) < 1500
+        assert f'"tool": "{tool}"' in SYSTEM, tool

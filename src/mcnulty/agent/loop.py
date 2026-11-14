@@ -30,7 +30,7 @@ from mcnulty.agent.prompt import (
 from mcnulty.agent.sandbox import TaskSandbox
 from mcnulty.agent.submit import (
     FALLBACK,
-    SUBMIT,
+    RUN_PYTHON,
     TOOLS,
     Accepted,
     Rejected,
@@ -138,8 +138,8 @@ class Tools(Frozen):
         return self.llm.describe_image(rec, url, args.question, max_tokens=1500)
 
     def call(self, rec: Recorder, call: ToolCall):
-        """Run one tool call. ``submit`` comes back as its arguments; a bad call or a failed tool becomes an error
-        text for the model, so the task goes on. Only the spend cap ends it."""
+        """Run one tool call. A ``submit`` tool call (not offered, but a model may call it) comes back as its
+        arguments; a bad call or a failed tool becomes an error text for the model, so the task goes on."""
         name, arguments = call.function.name, call.function.arguments
         try:
             if name == "submit":
@@ -214,7 +214,7 @@ def loop(rec: Recorder, tools: Tools, task: Task, deadline: Deadline) -> Solutio
         reply = tools.llm.chat(
             rec,
             shorten_old_outputs(tuple(messages)),
-            tools=(SUBMIT,) if last else TOOLS,
+            tools=(RUN_PYTHON,) if last else TOOLS,
             max_tokens=MAX_TOKENS,
             reasoning_effort="none",
             require_tool=last,
