@@ -1,7 +1,8 @@
 """Exact code checks on everything the agent sends out: answers, messages, drafts. No model, no task knowledge.
 
-- URLs with a scheme, path or query are defanged (``hxxps://evil[.]example/x``); bare domains and e-mail addresses stay,
-  since they can be the graded answer.
+- URLs with a scheme, a path, a query, a fragment or a port are defanged (``hxxps://evil[.]example/x``), also in
+  half-defanged or odd forms (``hxxps://evil.example/x``, ``//evil.example/x``, ``https:\\evil.example``,
+  ``mailto:a@evil.example?x``); bare domains and e-mail addresses stay, since they can be the graded answer.
 - Token values (``fake_…``, the platform's secret format, plus any known values) must not appear.
 - Long word sequences copied from operator rules (AGENTS.md, runbook, policies) must not appear. Short prescribed
   templates (a one-line message format) are fine, so only long copies count, and they need a judgment, not a block.
@@ -11,12 +12,24 @@
 import re
 from enum import StrEnum
 
+from pydantic import JsonValue
+
 from mcnulty.frozen import Frozen
 
 RULE_NGRAM = 20  # words in a row shared with an operator file that count as a copy; templates are shorter
 
-SCHEME_URL = re.compile(r"\b(?:https?|ftp)://[^\s<>()\"'\]]+", re.IGNORECASE)
-PATH_URL = re.compile(r"(?<![@\w.\-/])((?:[a-z0-9-]+\.)+[a-z]{2,})([/?][^\s<>()\"'\]]*)", re.IGNORECASE)
+URL_TAIL = r"[^\s<>()\"'\]]"
+URL = re.compile(
+    rf"""
+    (?<![\w.\-/@\\\[])                                          # not inside a word, path, address or [.]
+    (?P<prefix>[a-z][a-z0-9+.\-]*:(?:/{{1,3}}|\\{{1,2}})|mailto:|//|\\\\)?  # any scheme, also odd forms
+    (?P<user>[\w.+\-]+@)?
+    (?P<host>(?:[\w-]+[.\u3002\uff0e\uff61])+[^\W\d_]{{2,}}|\d{{1,3}}(?:\.\d{{1,3}}){{3}})
+    (?P<rest>:\d+[/\\?\#]{URL_TAIL}*|[/\\]{URL_TAIL}*|[?\#]{URL_TAIL}+)?   # port with path, path, query, fragment
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+HOST_DOT = re.compile(r"[.\u3002\uff0e\uff61]")
 TOKEN_VALUE = re.compile(r"\bfake_[A-Za-z0-9_\-]{6,}")
 WORD = re.compile(r"\w+")
 
@@ -40,21 +53,33 @@ class Finding(Frozen):
         return self.kind in BLOCKING
 
 
-def defang_host(host: str):
-    return host.replace(".", "[.]")
-
-
-def defang_scheme_url(match: re.Match[str]):
-    url = match.group(0)
-    scheme, rest = url.split("://", 1)
-    host, sep, tail = rest.partition("/")
-    return f"{scheme.lower().replace('t', 'x', 2)}://{defang_host(host)}{sep}{tail}"
+def defang_url(match: re.Match[str]):
+    prefix, user, host, rest = (match.group(name) or "" for name in ("prefix", "user", "host", "rest"))
+    if not prefix and not rest:
+        return match.group(0)  # a bare domain or e-mail address
+    if prefix.lower().startswith("http"):
+        prefix = "hxxp" + prefix[4:].lower()
+    return prefix + user + HOST_DOT.sub("[.]", host) + rest
 
 
 def defang_urls(text: str):
-    """Defang every URL that has a scheme, or a host followed by a path or query. Already-defanged text is unchanged."""
-    text = SCHEME_URL.sub(defang_scheme_url, text)
-    return PATH_URL.sub(lambda m: defang_host(m.group(1)) + m.group(2), text)
+    """Defang every host that has a scheme, a path, a query, a fragment or a port. Defanged hosts stay unchanged."""
+    return URL.sub(defang_url, text)
+
+
+def redact_tokens(text: str):
+    return TOKEN_VALUE.sub("[redacted]", text)
+
+
+def clean_answer(value: JsonValue) -> JsonValue:  # recursive
+    """Every string of an answer (keys too) defanged and without token values: the answer leaves the harness too."""
+    if isinstance(value, str):
+        return redact_tokens(defang_urls(value))
+    if isinstance(value, list):
+        return [clean_answer(item) for item in value]
+    if isinstance(value, dict):
+        return {redact_tokens(defang_urls(key)): clean_answer(item) for key, item in value.items()}
+    return value
 
 
 def token_values(text: str, known: frozenset[str]):

@@ -12,19 +12,26 @@ Layout in the container:
 Each run: ``chroot`` into the task root as uid 10001, cwd ``/``, an environment without keys, resource limits and a
 wall-clock timeout. Workspace files and the system are root-owned and read-only; ``/tmp`` is the writable scratch
 folder and is kept between the runs of a task. ``sitecustomize.py`` in the image blocks the network.
+
+Output: stdout, stderr and ``submit(...)`` calls go to three anonymous files of the harness, never pipes. The file
+size limit stops a print flood at ``FSIZE``, the harness reads only head and tail, and a child that leaves the process
+group holds no pipe the harness waits on.
 """
 
 import os
 import shutil
 import signal
 import subprocess
+import tempfile
 import threading
 import time
+from contextlib import suppress
 from pathlib import Path
+from typing import BinaryIO
 
 from mcnulty.blobs import BlobCache
 from mcnulty.frozen import Frozen
-from mcnulty.record.events import FileSkipped, SandboxRan
+from mcnulty.record.events import FileSkipped, SandboxRan, Stream
 from mcnulty.record.log import Recorder
 
 SITECUSTOMIZE = Path("/usr/local/lib/python3.12/site-packages/sitecustomize.py")  # only in the Docker image
@@ -34,10 +41,11 @@ NOT_IN_SANDBOX = ("usr/local/bin/uv",)
 TASKS = Path("/sandbox/tasks")
 UID = 10001
 TIMEOUT = 30.0  # seconds, wall clock
+FSIZE = 16 * 1024 * 1024  # bytes per written file, also per output stream
 LIMITS = (
     "--as=1500000000",  # bytes of address space
     "--cpu=30",  # CPU seconds
-    "--fsize=67108864",  # bytes per written file
+    f"--fsize={FSIZE}",
     "--nproc=256",  # processes of uid 10001, all tasks together
     "--nofile=256",
 )
@@ -49,21 +57,13 @@ ENV = {
     "OPENBLAS_NUM_THREADS": "1",
     "OMP_NUM_THREADS": "1",
 }
-RECORD_MAX = 1_000_000  # characters of stdout and stderr kept in the record
+RECORD_MAX = 200_000  # bytes of each stream kept in the record and in memory (head and tail)
 BASE_LOCK = threading.Lock()
 
 
 class SandboxUnavailable(RuntimeError):
     def __init__(self):
         super().__init__("the sandbox runs only inside the Docker image (see AGENTS.md, Commands)")
-
-
-class SandboxResult(Frozen):
-    stdout: str
-    stderr: str
-    exit_code: int | None  # None when the run timed out
-    seconds: float
-    timed_out: bool
 
 
 def ensure_base():
@@ -85,8 +85,29 @@ def ensure_base():
         partial.rename(BASE)
 
 
-def decode(raw: bytes):
-    return raw.decode("utf-8", errors="replace")
+def read_stream(file: BinaryIO):
+    """The head and tail of an output file (at most ``RECORD_MAX`` bytes in memory), its size and line count."""
+    size = os.fstat(file.fileno()).st_size
+    file.seek(0)
+    lines = sum(chunk.count(b"\n") for chunk in iter(lambda: file.read(1 << 20), b""))
+    file.seek(0)
+    if size <= RECORD_MAX:
+        text = file.read().decode("utf-8", errors="replace")
+    else:
+        half = RECORD_MAX // 2
+        head = file.read(half)
+        file.seek(size - half)
+        tail = file.read()
+        note = f"\n[... {size - 2 * half:,} bytes not kept ...]\n"
+        text = head.decode("utf-8", errors="replace") + note + tail.decode("utf-8", errors="replace")
+    return Stream(text=text, bytes=size, lines=lines, capped=size >= FSIZE)
+
+
+def last_submission(file: BinaryIO):
+    """The JSON of the last ``submit(...)`` call: one line per call, written by ``sandbox/sitecustomize.py``."""
+    file.seek(0)
+    calls = file.read().decode("utf-8", errors="replace").splitlines()
+    return calls[-1] if calls else None
 
 
 class TaskSandbox(Frozen):
@@ -123,8 +144,12 @@ class TaskSandbox(Frozen):
         return cls(root=root)
 
     def run(self, rec: Recorder, code: str, timeout: float = TIMEOUT):
-        """Run ``code`` with ``python -I`` as uid 10001 in the task root; log and return the full output."""
+        """Run ``code`` with ``python -I`` as uid 10001 in the task root; log and return the result."""
         command = [
+            "/usr/bin/choom",
+            "-n",
+            "1000",  # out of memory: the kernel kills a script before the harness
+            "--",
             "/usr/bin/prlimit",
             *LIMITS,
             "--",
@@ -136,39 +161,39 @@ class TaskSandbox(Frozen):
             "-",
         ]
         t0 = time.time()
-        with subprocess.Popen(  # noqa: S603 - running untrusted code in the isolated child is the purpose
-            command,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=ENV,
-            start_new_session=True,  # its own process group, so a timeout kills every child too
-        ) as child:
-            try:
-                out, err = child.communicate(code.encode("utf-8"), timeout=timeout)
-                exit_code, timed_out = child.returncode, False
-            except subprocess.TimeoutExpired:
-                os.killpg(child.pid, signal.SIGKILL)
-                out, err = child.communicate()
-                exit_code, timed_out = None, True
-        result = SandboxResult(
-            stdout=decode(out),
-            stderr=decode(err),
-            exit_code=exit_code,
-            seconds=round(time.time() - t0, 3),
-            timed_out=timed_out,
-        )
-        rec.log(
-            SandboxRan(
+        with (
+            tempfile.TemporaryFile() as out,
+            tempfile.TemporaryFile() as err,
+            tempfile.TemporaryFile() as calls,
+        ):
+            with subprocess.Popen(  # noqa: S603 - running untrusted code in the isolated child is the purpose
+                command,
+                stdin=subprocess.PIPE,
+                stdout=out,
+                stderr=err,
+                pass_fds=(calls.fileno(),),
+                env={**ENV, "SUBMIT_FD": str(calls.fileno())},
+                start_new_session=True,  # its own process group, so one kill ends its children too
+            ) as child:
+                try:
+                    child.communicate(code.encode("utf-8"), timeout=timeout)
+                    exit_code, timed_out = child.returncode, False
+                except subprocess.TimeoutExpired:
+                    exit_code, timed_out = None, True
+                with suppress(ProcessLookupError):  # no process of the group is left
+                    os.killpg(child.pid, signal.SIGKILL)
+                child.wait()
+            event = SandboxRan(
                 code=code,
-                stdout=result.stdout[:RECORD_MAX],
-                stderr=result.stderr[:RECORD_MAX],
-                exit_code=result.exit_code,
-                seconds=result.seconds,
-                timed_out=result.timed_out,
+                stdout=read_stream(out),
+                stderr=read_stream(err),
+                submitted=last_submission(calls),
+                exit_code=exit_code,
+                seconds=round(time.time() - t0, 3),
+                timed_out=timed_out,
             )
-        )
-        return result
+        rec.log(event)
+        return event
 
     def remove(self):
         shutil.rmtree(self.root, ignore_errors=True)

@@ -78,3 +78,15 @@ Format example (ignored: it sits in a code block). Write your entries below it, 
 - why: the model writes to a scratch folder (`/tmp`, kept between steps) but cannot change the workspace files or its own Python; it gets pandas, numpy, openpyxl, odfpy, python-docx, pypdf, pillow, pyyaml and tzdata. Docker's overlay filesystem copies a file up on every hard link, so the container's own root (one Python for harness and sandbox, without /app, uv and the system folders) is copied once into the writable layer (4.7 s); each task's root is then a hard-link copy (0.1 s, 4 MB) under the final's 4 GB disk limit
 - rejected: a second root filesystem in the image (320 MB duplicate); a hand-picked list of folders to copy (one missing library breaks an import only at run time); hard links straight from the image (320 MB per task); one shared root (tasks run in parallel at the same paths); a pool of slots (more moving parts); blocking processes (Python is enough; the network block in sitecustomize is for a clear error, the hard limits are chroot, uid, read-only files, empty environment and the gateway-only network)
 - evidence: tests/test_sandbox.py in the image (11 passed); a real task with 393 files ready in 0.5 s
+
+## 13:10 · run_python output contract and run safety before more evals
+
+- decided_by: both
+- why: the reviews found the final run can lose every task: one print loop fills the harness memory (container killed
+  in 1-8 s), a detached child hangs a task, nothing watches the 30 minutes, and the answer goes out without a guard.
+  The user stopped an eval: fix a large batch first, then measure once.
+- rejected: spill files the model can open (pi's bash pattern: costs a step, recompute is cheap here); one uid per
+  task and a script semaphore (later, need measuring); a model call to gate actions (cost)
+- evidence: docs/research/2026-11-14-review-findings.md (SB1-SB3, SG1, SG4, OP1-OP7), docs/research/2026-11-14-pi-code-mode.md;
+  flood and detached-child tests pass in the image; defang changes 0 of 3,184 expected answer strings
+

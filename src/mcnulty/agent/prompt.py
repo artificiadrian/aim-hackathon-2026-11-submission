@@ -1,11 +1,15 @@
 """What the model reads: the system text, the first message and the history it is resent. Pure functions."""
 
+import signal
 from collections import Counter, defaultdict
 from pathlib import PurePosixPath
 
 from mcnulty.clients.openrouter import Message, ToolMessage
+from mcnulty.record.events import SandboxRan, Stream
 
-OUTPUT_MAX = 6000  # characters of a script's output the model sees (head and tail)
+OUTPUT_MAX = 6000  # characters of a script's stdout the model sees (head and tail)
+STDERR_MAX = 1500  # characters of stderr (the tail, where the traceback is)
+REPEATS_KEPT = 2  # a stderr line seen more often is shown once, with a count
 OLD_OUTPUT_MAX = 500  # characters kept of older outputs; the full text stays in the record
 KEEP_FULL = 2  # the latest tool outputs stay whole
 FOLDER_LIST_MAX = 12  # a folder with more files is shown as counts per file type
@@ -49,6 +53,11 @@ them after submit, only with outcome OK. Never propose an action the task does n
 
 LAST_STEP = "This is your last step: call submit now with your best answer."
 USE_A_TOOL = "Use a tool: run_python or view_image to work, submit to finish."
+CUT_REPLY = (
+    "not run: your reply was cut at the token limit, so this call may be incomplete. Write a shorter script: save "
+    "intermediate results under /tmp and continue in the next call."
+)
+SIGNAL_HINTS = {"SIGXCPU": "CPU time limit", "SIGKILL": "memory or process limit", "SIGXFSZ": "file size limit"}
 
 
 def file_tree(sizes: dict[str, int]):
@@ -75,17 +84,55 @@ def first_message(instruction: str, trusted: dict[str, str], sizes: dict[str, in
     return "\n\n".join(parts)
 
 
-def cut(text: str, limit: int):
-    if len(text) <= limit:
-        return text
-    half = limit // 2
-    return f"{text[:half]}\n[... {len(text) - limit} characters cut ...]\n{text[-half:]}"
+def status(run: SandboxRan):
+    """The first line of a script's output, in words: how it ended."""
+    seconds = f"{run.seconds:.1f}s"
+    if run.timed_out:
+        return f"[script timed out after {seconds} and was stopped; make it faster or split it]"
+    if run.exit_code is not None and run.exit_code < 0:
+        name = signal.Signals(-run.exit_code).name
+        return f"[script killed by {name} ({SIGNAL_HINTS.get(name, 'a signal')}), {seconds}]"
+    verb = "finished" if run.exit_code == 0 else "failed"
+    capped = "; stdout stopped at the file size limit" if run.stdout.capped else ""
+    return f"[script {verb}, exit code {run.exit_code}, {seconds}{capped}]"
 
 
-def script_output(stdout: str, stderr: str, exit_code: int | None, seconds: float):
-    status = "timed out" if exit_code is None else f"exit code {exit_code}"
-    output = stdout + (f"\n[stderr]\n{stderr}" if stderr.strip() else "")
-    return f"[{status}, {seconds:.1f}s]\n{cut(output, OUTPUT_MAX)}"
+def stdout_view(out: Stream):
+    """Head and tail up to ``OUTPUT_MAX``, with the real totals when cut."""
+    if len(out.text) <= OUTPUT_MAX:
+        return out.text
+    half = OUTPUT_MAX // 2
+    note = (
+        f"[... output cut: {out.bytes:,} bytes, {out.lines:,} lines in all; shown are the first and last "
+        f"{half:,} characters. Print less, or save results under /tmp and print a summary ...]"
+    )
+    return f"{out.text[:half]}\n{note}\n{out.text[-half:]}"
+
+
+def stderr_view(err: Stream):
+    """Lines seen more than ``REPEATS_KEPT`` times shown once with a count, then the tail up to ``STDERR_MAX``."""
+    lines = err.text.splitlines()
+    counts = Counter(lines)
+    kept: list[str] = []
+    shown: set[str] = set()
+    for line in lines:
+        if counts[line] <= REPEATS_KEPT:
+            kept.append(line)
+        elif line not in shown:
+            shown.add(line)
+            kept.append(f"{line}  [repeated {counts[line]} times]")
+    text = "\n".join(kept)
+    if len(text) > STDERR_MAX:
+        text = f"[... {len(text) - STDERR_MAX:,} characters cut ...]\n{text[-STDERR_MAX:]}"
+    return f"<stderr lines={err.lines}>\n{text}\n</stderr>"
+
+
+def script_output(run: SandboxRan):
+    """What the model sees of one run: the status line, stdout, then stderr in its own block."""
+    parts = [status(run), stdout_view(run.stdout)]
+    if run.stderr.text.strip():
+        parts.append(stderr_view(run.stderr))
+    return "\n".join(parts)
 
 
 def shorten_old_outputs(messages: tuple[Message, ...]):

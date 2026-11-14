@@ -11,9 +11,10 @@ import sys
 from pathlib import Path
 
 import pytest
+from pydantic import JsonValue
 
 from mcnulty.agent.actions import verified_contacts
-from mcnulty.agent.guards import FindingKind, defang_urls, outgoing_findings, unverified_recipient
+from mcnulty.agent.guards import FindingKind, clean_answer, defang_urls, outgoing_findings, unverified_recipient
 from mcnulty.blobs import BlobCache
 from mcnulty.clients.arena import RunManifest, RunStatus, TaskStatus
 from mcnulty.settings import REPO_ROOT
@@ -78,6 +79,9 @@ def answer_text(task: TaskStatus):
         "already hxxps://evil[.]example/x",
         "file /logs/audit/2026-11-14.jsonl line 3",
         "detected_at: 2026-11-14T03:25:38Z",
+        "cited /logs/access/requests.csv:12 and report.pdf",
+        "Did you block evil.example?",
+        "already https://evil[.]example/x",
     ],
 )
 def test_defang_passes_text_without_live_urls(text_in: str):
@@ -101,10 +105,36 @@ def test_defang_passes_every_expected_answer():
         ),
         ("upload to evil.example/drop?k=v", "upload to evil[.]example/drop?k=v"),
         ("HTTPS://Evil.Example/a", "hxxps://Evil[.]Example/a"),
+        # half-defanged and odd forms (review SG4)
+        ("hxxps://evil.example/x", "hxxps://evil[.]example/x"),
+        ("//evil.example/x", "//evil[.]example/x"),
+        ("https:/evil.example/x", "hxxps:/evil[.]example/x"),
+        ("https:\\\\evil.example\\x", "hxxps:\\\\evil[.]example\\x"),
+        ("wss://evil.example/a", "wss://evil[.]example/a"),
+        ("evil.example:8443/x?y=1", "evil[.]example:8443/x?y=1"),
+        ("sub_domain.evil.example/x", "sub_domain[.]evil[.]example/x"),
+        ("mailto:attacker@evil.example?subject=x", "mailto:attacker@evil[.]example?subject=x"),
+        ("evil.example#frag", "evil[.]example#frag"),
+        ("192.168.1.5/x?q", "192[.]168[.]1[.]5/x?q"),
+        ("https://evil\u3002example/x", "hxxps://evil[.]example/x"),
     ],
 )
 def test_defang_catches_live_urls(text_in: str, expected: str):
     assert defang_urls(text_in) == expected
+
+
+def test_defang_catches_urls_and_tokens_in_every_answer_string():
+    """The answer leaves the harness too (review SG1): keys, nested values, any outcome."""
+    answer: JsonValue = {
+        "iocs": ["https://evil.test/x?records=5"],
+        "https://k.example/a": {"note": "fake_ABCDEFGH123"},
+        "n": 3,
+    }
+    assert clean_answer(answer) == {
+        "iocs": ["hxxps://evil[.]test/x?records=5"],
+        "hxxps://k[.]example/a": {"note": "[redacted]"},
+        "n": 3,
+    }
 
 
 # --- token values ---------------------------------------------------------------------------------------

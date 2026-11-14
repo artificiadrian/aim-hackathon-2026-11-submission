@@ -11,6 +11,7 @@ Every run records all requests and responses to runs/<UTC time>/events.jsonl.
 import argparse
 import io
 import sys
+import time
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -45,6 +46,7 @@ def build_parser(default_kind: str | None):
     run = commands.add_parser("run", help="solve and submit tasks, then finish the run")
     run.add_argument("--kind", default=default_kind or "dev", help="dev or final (default: $ARENA_RUN_KIND, else dev)")
     run.add_argument("--parallel", type=int, default=12)
+    run.add_argument("--max-usd", type=float, default=1.5, help="hard spend cap for model calls (final budget: $3)")
 
     evaluate = commands.add_parser("eval", help="offline: solve a saved dev run and grade it against its answers")
     evaluate.add_argument("run_dir", type=Path, help="a finished dev run in runs/ (with finish.json)")
@@ -82,13 +84,21 @@ def to_args(p: argparse.ArgumentParser, ns: Namespace):
         if ns.command == "eval":
             data = {"run_dir": ns.run_dir, "note": ns.note, "only": filter_data(ns), "max_usd": ns.max_usd}
             return EvalArgs.model_validate(data)
-        data = {"kind": ns.kind, "note": ns.note, "seed": ns.seed, "only": filter_data(ns), "parallel": ns.parallel}
+        data = {
+            "kind": ns.kind,
+            "note": ns.note,
+            "seed": ns.seed,
+            "only": filter_data(ns),
+            "parallel": ns.parallel,
+            "max_usd": ns.max_usd,
+        }
         return RunArgs.model_validate(data)
     except (ValidationError, ValueError) as e:
         p.error(str(e))
 
 
 def main():
+    started = time.time()  # the final's 30 minutes count from the container start
     if isinstance(sys.stdout, io.TextIOWrapper):
         sys.stdout.reconfigure(line_buffering=True)
     settings = load_settings()
@@ -99,4 +109,4 @@ def main():
     args = to_args(p, ns)
     if isinstance(args, EvalArgs):
         return eval_tasks(settings, args)
-    return run_tasks(settings, args)
+    return run_tasks(settings, args, started)

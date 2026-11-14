@@ -11,6 +11,7 @@ from typing import Annotated, ClassVar, Literal
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, PrivateAttr, ValidationError
 
+from mcnulty.clients.http import header, retry_after
 from mcnulty.frozen import Frozen
 from mcnulty.record.events import ErrorInfo, LlmExchange, LlmFailed
 from mcnulty.record.log import Recorder
@@ -19,6 +20,7 @@ from mcnulty.settings import Settings
 MAIN_MODEL = "google/gemma-4-31b-it"
 JEV_MODEL = "typesafe/jev-1.14"
 RETRIES = 5
+BUDGET = 600.0  # seconds for one call with all its retries, unless the caller has less time
 
 type ReasoningEffort = Literal["none", "low", "medium", "high"]
 
@@ -239,10 +241,6 @@ class CostTracker(BaseModel):
         return self.cap is not None and self.total >= self.cap
 
 
-def header(response: httpx.Response, name: str):
-    return response.headers[name] if name in response.headers else ""  # noqa: SIM401 - Headers.get is typed Any
-
-
 # --- client -------------------------------------------------------------------------------------------
 class OpenRouterClient(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, arbitrary_types_allowed=True)
@@ -267,17 +265,29 @@ class OpenRouterClient(BaseModel):
         """Jev is on the same host with ``/v1`` replaced: ``.../api/v1`` -> ``.../api/alpha/decisions``."""
         return f"{self.base_url.removesuffix('/v1')}/alpha/decisions"
 
-    def post[R: Reply](self, rec: Recorder, url: str, request: Frozen, reply: type[R], timeout: float = 180.0):
-        """POST with retries on network errors, 408, 429, 5xx, 402 + Retry-After and 200 + error body."""
+    def post[R: Reply](
+        self,
+        rec: Recorder,
+        url: str,
+        request: Frozen,
+        reply: type[R],
+        timeout: float = 180.0,
+        budget: float = BUDGET,
+    ):
+        """POST with retries on network errors, 408, 429, 5xx, 402 + Retry-After and 200 + error body. ``timeout``
+        is per attempt; ``budget`` is the time in seconds for all attempts and waits together."""
         if self.tracker.capped:
             raise BudgetExhausted(url, None, f"spend cap ${self.tracker.cap} reached (${self.tracker.total:.4f})")
         body = request.model_dump(mode="json", exclude_none=True)
-        last = ""
+        stop = time.time() + budget
+        last = "no time left for an attempt"
         for attempt in range(RETRIES + 1):
+            if stop - time.time() < 1.0:
+                break
             wait = 0.0
             t0 = time.time()
             try:
-                r = self.http.post(url, json=body, timeout=timeout)
+                r = self.http.post(url, json=body, timeout=min(timeout, stop - t0))
             except httpx.TransportError as e:
                 last = f"{type(e).__name__}: {e}"
                 rec.log(LlmFailed(url=url, request=body, error=ErrorInfo.from_exception(e)))
@@ -300,11 +310,11 @@ class OpenRouterClient(BaseModel):
                     or (r.status_code == 402 and "retry-after" in r.headers)
                 ):
                     last = f"{r.status_code}: {r.text[:300]}"
-                    wait = min(float(header(r, "retry-after") or 0), 120.0)
+                    wait = min(retry_after(header(r, "retry-after")), 120.0)
                 else:
                     raise LLMError(url, r.status_code, r.text[:500])
             if attempt < RETRIES:
-                time.sleep(max(min(2 * (1 << attempt), 30), wait))
+                time.sleep(max(0.0, min(max(min(2 * (1 << attempt), 30), wait), stop - time.time())))
         raise RetriesExhausted(url, None, last)
 
     def chat(
@@ -317,9 +327,10 @@ class OpenRouterClient(BaseModel):
         temperature: float = 0.0,
         reasoning_effort: ReasoningEffort | None = None,
         require_tool: bool = False,
+        budget: float = BUDGET,
     ):
         """One chat/completions call on the fixed model. Thinking tokens count against ``max_tokens``.
-        ``require_tool``: the reply must call one of ``tools``."""
+        ``require_tool``: the reply must call one of ``tools``. ``budget``: seconds for all attempts."""
         request = ChatRequest(
             messages=messages,
             max_tokens=max_tokens,
@@ -328,7 +339,7 @@ class OpenRouterClient(BaseModel):
             tools=tools or None,
             tool_choice=("required" if require_tool else "auto") if tools else None,
         )
-        response = self.post(rec, f"{self.base_url}/chat/completions", request, ChatResponse)
+        response = self.post(rec, f"{self.base_url}/chat/completions", request, ChatResponse, budget=budget)
         self.tracker.add(MAIN_MODEL, response.usage)
         return response
 

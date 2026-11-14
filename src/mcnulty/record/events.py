@@ -193,14 +193,39 @@ class FileSkipped(Frozen):
     reason: Literal["not_downloaded", "outside_root"]
 
 
+class DeadlineReached(Frozen):
+    """``mcnulty run`` reached its deadline and submitted the fallback for every task still open."""
+
+    kind: Literal["deadline_reached"] = "deadline_reached"
+    open_tasks: tuple[str, ...]
+
+
+class ToolFailed(Frozen):
+    """A tool of the model failed (a vision call, a sandbox error); the model gets an error text and goes on."""
+
+    kind: Literal["tool_failed"] = "tool_failed"
+    tool: str
+    error: ErrorInfo
+
+
+class Stream(Frozen):
+    """One output stream of a sandbox run: its head and tail as text, and its real size."""
+
+    text: str  # whole, or head and tail with a note in the middle when longer than the record keeps
+    bytes: int
+    lines: int
+    capped: bool  # the run reached the file size limit on this stream
+
+
 class SandboxRan(Frozen):
-    """One run of model-written code in the sandbox (``src/mcnulty/sandbox.py``)."""
+    """One run of model-written code in the sandbox (``src/mcnulty/agent/sandbox.py``); also its result."""
 
     kind: Literal["sandbox"] = "sandbox"
     code: str
-    stdout: str  # full output, up to RECORD_MAX characters
-    stderr: str
-    exit_code: int | None  # None when the run timed out
+    stdout: Stream
+    stderr: Stream
+    submitted: str | None  # the JSON of the last ``submit(...)`` the code called
+    exit_code: int | None  # None when the run timed out; negative: killed by that signal
     seconds: float
     timed_out: bool
 
@@ -227,6 +252,8 @@ Event = Annotated[
     | RunFinished
     | FileSkipped
     | SandboxRan
+    | ToolFailed
+    | DeadlineReached
     | CheckResult,
     Field(discriminator="kind"),
 ]

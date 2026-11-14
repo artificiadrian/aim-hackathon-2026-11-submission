@@ -7,11 +7,14 @@ side effects (blob reads, model calls, sandbox runs); ``prompt`` and ``submit`` 
 """
 
 import base64
+import math
+import time
 
 from pydantic import ValidationError
 
 from mcnulty.agent.actions import verified_contacts
 from mcnulty.agent.prompt import (
+    CUT_REPLY,
     LAST_STEP,
     SYSTEM,
     USE_A_TOOL,
@@ -28,15 +31,17 @@ from mcnulty.agent.submit import (
     Rejected,
     RunPythonArgs,
     ScriptRun,
+    Solution,
     ViewImageArgs,
     check_submit,
     solution,
-    split_submission,
 )
 from mcnulty.blobs import BlobCache
 from mcnulty.clients.arena import Task
 from mcnulty.clients.openrouter import (
     AssistantMessage,
+    BudgetExhausted,
+    LLMError,
     Message,
     OpenRouterClient,
     SystemMessage,
@@ -45,13 +50,28 @@ from mcnulty.clients.openrouter import (
     UserMessage,
 )
 from mcnulty.frozen import Frozen
-from mcnulty.record.events import TaskSolved
+from mcnulty.record.events import ErrorInfo, TaskSolved, ToolFailed
 from mcnulty.record.log import Recorder
 
 MAX_STEPS = 12  # model calls per task; the last one must submit
 MAX_TOKENS = 3000  # per model reply
+LAST_CALL_LEFT = 240.0  # seconds before the deadline: the next call is the submit-only last step
+CALL_RESERVE = 60.0  # seconds before the deadline at which a model call stops waiting or retrying
 OPERATOR_FILES = ("/AGENTS.md", "/runbook.md")
 IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
+
+
+class Deadline(Frozen):
+    """When every task must be submitted (epoch seconds). The loops hurry before it; ``mcnulty run`` submits the
+    fallback for every open task at it."""
+
+    end: float
+
+    def left(self):
+        return self.end - time.time()
+
+
+NO_DEADLINE = Deadline(end=math.inf)
 
 
 class TaskFiles(Frozen):
@@ -90,21 +110,20 @@ class Tools(Frozen):
     blobs: BlobCache
 
     def run_python(self, rec: Recorder, args: RunPythonArgs):
-        result = self.box.run(rec, args.code)
-        stdout, submitted = split_submission(result.stdout)
-        output = script_output(stdout, result.stderr, result.exit_code, result.seconds)
-        return ScriptRun(output=output, submitted=submitted)
+        run = self.box.run(rec, args.code)
+        return ScriptRun(output=script_output(run), submitted=run.submitted)
 
     def view_image(self, rec: Recorder, args: ViewImageArgs):
         suffix = "." + args.path.rsplit(".", 1)[-1].lower()
-        data = self.blobs.get(self.files.paths.get(args.path, ""))
+        data = self.blobs.get(self.files.paths[args.path]) if args.path in self.files.paths else None
         if data is None or suffix not in IMAGE_TYPES:
-            return f"error: {args.path} is not an image file of the workspace"
+            return f"error: {args.path} is not an image file of the workspace (use the full path, e.g. /scans/a.jpg)"
         url = f"data:{IMAGE_TYPES[suffix]};base64,{base64.b64encode(data).decode()}"
         return self.llm.describe_image(rec, url, args.question, max_tokens=1500)
 
     def call(self, rec: Recorder, call: ToolCall):
-        """Run one tool call. ``submit`` comes back as its arguments; a bad call becomes an error for the model."""
+        """Run one tool call. ``submit`` comes back as its arguments; a bad call or a failed tool becomes an error
+        text for the model, so the task goes on. Only the spend cap ends it."""
         name, arguments = call.function.name, call.function.arguments
         try:
             if name == "submit":
@@ -115,21 +134,33 @@ class Tools(Frozen):
                 return ScriptRun(output=self.view_image(rec, ViewImageArgs.model_validate_json(arguments)))
         except ValidationError as e:
             return ScriptRun(output=f"error in the arguments of {name}: {e}")
+        except BudgetExhausted:
+            raise
+        except (OSError, LLMError) as e:
+            rec.log(ToolFailed(tool=name, error=ErrorInfo.from_exception(e)))
+            return ScriptRun(output=f"error: {name} failed ({type(e).__name__}); try again or work without it")
         return ScriptRun(output=f"error: no tool named {name}")
 
 
-def solve(rec: Recorder, llm: OpenRouterClient, task: Task, files: dict[str, str], blobs: BlobCache):
+def solve(
+    rec: Recorder,
+    llm: OpenRouterClient,
+    task: Task,
+    files: dict[str, str],
+    blobs: BlobCache,
+    deadline: Deadline = NO_DEADLINE,
+):
     task_files = TaskFiles.load(files, blobs)
     box = TaskSandbox.create(rec, task.task_id, files, blobs)
     try:
-        result = loop(rec, Tools(llm=llm, box=box, files=task_files, blobs=blobs), task)
+        result = loop(rec, Tools(llm=llm, box=box, files=task_files, blobs=blobs), task, deadline)
     finally:
         box.remove()
     rec.log(TaskSolved(solution=result.model_dump(mode="json")))
     return result
 
 
-def loop(rec: Recorder, tools: Tools, task: Task):
+def loop(rec: Recorder, tools: Tools, task: Task, deadline: Deadline) -> Solution:  # too complex for return inference
     files = tools.files
     verified = verified_contacts(files.contacts)
     messages: list[Message] = [
@@ -139,7 +170,7 @@ def loop(rec: Recorder, tools: Tools, task: Task):
     locators_asked = False
     rejected_before = False
     for step in range(1, MAX_STEPS + 1):
-        last = step == MAX_STEPS
+        last = step == MAX_STEPS or deadline.left() < LAST_CALL_LEFT
         if last:
             messages.append(UserMessage(content=LAST_STEP))
         reply = tools.llm.chat(
@@ -149,11 +180,16 @@ def loop(rec: Recorder, tools: Tools, task: Task):
             max_tokens=MAX_TOKENS,
             reasoning_effort="none",
             require_tool=last,
+            budget=max(deadline.left() - CALL_RESERVE, 10.0),
         )
-        message = reply.choices[0].message
+        choice = reply.choices[0]
+        message = choice.message
         messages.append(AssistantMessage(content=message.content, tool_calls=message.tool_calls))
         if not message.tool_calls:
             messages.append(UserMessage(content=USE_A_TOOL))
+            continue
+        if choice.finish_reason == "length" and not last:  # the arguments may be cut: run none of them
+            messages += [ToolMessage(tool_call_id=call.id, content=CUT_REPLY) for call in message.tool_calls]
             continue
         for call in message.tool_calls:
             run = tools.call(rec, call)
@@ -162,7 +198,7 @@ def loop(rec: Recorder, tools: Tools, task: Task):
                 continue
             match check_submit(run.submitted, last, locators_asked, rejected_before):
                 case Accepted(args=args):
-                    return solution(args, verified, files.rules, step)
+                    return solution(args, frozenset(files.paths), verified, files.rules, step)
                 case Rejected(message=reason, asked_locators=asked):
                     locators_asked = locators_asked or asked
                     rejected_before = rejected_before or not asked

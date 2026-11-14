@@ -2,7 +2,7 @@
 
 import json
 
-from mcnulty.agent.prompt import file_tree, shorten_old_outputs
+from mcnulty.agent.prompt import OUTPUT_MAX, file_tree, script_output, shorten_old_outputs
 from mcnulty.agent.submit import (
     Accepted,
     Rejected,
@@ -10,9 +10,9 @@ from mcnulty.agent.submit import (
     missing_locators,
     parse_submit,
     salvage_submit,
-    split_submission,
 )
 from mcnulty.clients.openrouter import Message, ToolMessage, UserMessage
+from mcnulty.record.events import SandboxRan, Stream
 
 
 def test_submit_answer_given_as_json_text_becomes_its_value():
@@ -73,11 +73,44 @@ def test_salvage_keeps_every_valid_part_of_an_invalid_submission():
     assert salvage_submit('{"outcome": "MAYBE"}') is None
 
 
-def test_a_script_submission_is_taken_from_the_output_and_checked():
-    marker = '@@submit@@ {"outcome": "OK", "answer": [1], "sources": [{"path": "/a.csv", "record": "R-1"}]}'
-    output, submitted = split_submission(f"rows: 3\n{marker}\ndone")
-    assert output == "rows: 3\ndone"
-    assert submitted is not None
+def stream(text: str):
+    return Stream(text=text, bytes=len(text), lines=text.count("\n"), capped=False)
+
+
+def sandbox_run(stdout: str = "", stderr: str = "", exit_code: int | None = 0):
+    return SandboxRan(
+        code="",
+        stdout=stream(stdout),
+        stderr=stream(stderr),
+        submitted=None,
+        exit_code=exit_code,
+        seconds=1.0,
+        timed_out=exit_code is None,
+    )
+
+
+def test_script_output_states_how_the_script_ended():
+    assert script_output(sandbox_run("rows 3\n")).startswith("[script finished, exit code 0, 1.0s]\nrows 3")
+    assert script_output(sandbox_run(exit_code=1)).startswith("[script failed, exit code 1")
+    assert "SIGXCPU (CPU time limit)" in script_output(sandbox_run(exit_code=-24))
+    assert "timed out" in script_output(sandbox_run(exit_code=None))
+
+
+def test_script_output_keeps_stdout_and_stderr_apart():
+    """Warnings must not push the result out of view (review SB3): stdout has its own budget, repeats are counted."""
+    warnings = "WARNING: fontTools is required\n" * 1590
+    output = script_output(sandbox_run("answer 42\n", warnings + "Traceback: KeyError 'id'\n", exit_code=1))
+    assert "answer 42" in output
+    assert "fontTools is required  [repeated 1590 times]" in output
+    assert "KeyError 'id'" in output
+    assert len(output) < 500
+    long = script_output(sandbox_run("x" * 50_000))
+    assert len(long) < OUTPUT_MAX + 400
+    assert "50,000 bytes" in long
+
+
+def test_a_script_submission_is_checked_like_the_tool():
+    submitted = '{"outcome": "OK", "answer": [1], "sources": [{"path": "/a.csv", "record": "R-1"}]}'
     accepted = check_submit(submitted, last=False, locators_asked=False, rejected_before=False)
     assert isinstance(accepted, Accepted)
     assert accepted.args.answer == [1]

@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from mcnulty.agent.sandbox import SITECUSTOMIZE, TaskSandbox
+from mcnulty.agent.sandbox import FSIZE, RECORD_MAX, SITECUSTOMIZE, TaskSandbox
 from mcnulty.blobs import BlobCache
 from mcnulty.record.log import EventLog, Recorder
 
@@ -37,8 +37,8 @@ def rec(tmp_path: Path):
 
 def run_ok(box: TaskSandbox, rec: Recorder, code: str):
     result = box.run(rec, code)
-    assert result.exit_code == 0, result.stderr
-    return result.stdout.strip()
+    assert result.exit_code == 0, result.stderr.text
+    return result.stdout.text.strip()
 
 
 # --- passes ---------------------------------------------------------------------------------------------
@@ -75,7 +75,7 @@ def test_passes_scratch_kept_between_runs(box: TaskSandbox, rec: Recorder):
 def test_catches_writes_outside_scratch(box: TaskSandbox, rec: Recorder, code: str):
     result = box.run(rec, code)
     assert result.exit_code != 0
-    assert "PermissionError" in result.stderr
+    assert "PermissionError" in result.stderr.text
 
 
 def test_catches_no_keys_no_host_files_and_second_user(
@@ -93,7 +93,7 @@ def test_catches_no_keys_no_host_files_and_second_user(
 
 def test_catches_network(box: TaskSandbox, rec: Recorder):
     result = box.run(rec, "import urllib.request; urllib.request.urlopen('http://example.com', timeout=3)")
-    assert "the sandbox has no network" in result.stderr
+    assert "the sandbox has no network" in result.stderr.text
 
 
 def test_catches_runaway_code(box: TaskSandbox, rec: Recorder):
@@ -105,7 +105,7 @@ def test_catches_runaway_code(box: TaskSandbox, rec: Recorder):
     assert slow.timed_out
     assert slow.seconds < 5
     memory = box.run(rec, "x = bytearray(3_000_000_000)")
-    assert "MemoryError" in memory.stderr
+    assert "MemoryError" in memory.stderr.text
     big = box.run(rec, "open('/tmp/big', 'wb').write(b'0' * 100_000_000)")
     assert big.exit_code != 0
 
@@ -140,8 +140,28 @@ def test_passes_submit_from_code_with_numpy_values(box: TaskSandbox, rec: Record
     code = (
         "import pandas as pd\n"
         "df = pd.read_csv('/logs/access/requests.csv')\n"
+        "print('rows', len(df))\n"
         "submit(outcome='OK', answer=df.records.sum(), sources=[{'path': '/logs/access/requests.csv', 'line': 2}])"
     )
-    out = run_ok(box, rec, code)
-    assert out.startswith("@@submit@@ ")
-    assert '"answer": 12' in out
+    result = box.run(rec, code)
+    assert result.exit_code == 0, result.stderr.text
+    assert result.stdout.text.startswith("rows 2\n")
+    assert result.submitted is not None
+    assert '"answer": 12' in result.submitted
+
+
+def test_catches_a_print_flood_without_harness_memory(box: TaskSandbox, rec: Recorder):
+    """A print loop stops at the file size limit; the harness keeps only head and tail (review SB1)."""
+    result = box.run(rec, "while True: print('x' * 1000)", timeout=20)
+    assert result.stdout.capped
+    assert result.stdout.bytes <= FSIZE
+    assert len(result.stdout.text) <= RECORD_MAX + 100
+    assert "File too large" in result.stderr.text
+
+
+def test_catches_a_detached_child(box: TaskSandbox, rec: Recorder):
+    """A child in its own session must not hold the run open (review SB2)."""
+    code = "import os, time\nif os.fork() == 0:\n    os.setsid()\n    time.sleep(600)\nprint('parent done')"
+    result = box.run(rec, code, timeout=5)
+    assert result.stdout.text.strip() == "parent done"
+    assert result.seconds < 5

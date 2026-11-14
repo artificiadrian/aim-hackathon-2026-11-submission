@@ -5,12 +5,12 @@ from typing import Annotated
 from pydantic import BeforeValidator, JsonValue, TypeAdapter, ValidationError
 
 from mcnulty.agent.actions import Action, VettedAction, vet
+from mcnulty.agent.guards import clean_answer
 from mcnulty.clients.arena import Outcome, Source, Submission
 from mcnulty.clients.openrouter import FunctionSpec, ToolDefinition
 from mcnulty.frozen import JSON, Frozen, ModelInput
 
 PATH_ONLY = (".png", ".jpg", ".jpeg", ".json")  # cited by path alone
-SUBMIT_MARKER = "@@submit@@ "  # printed by submit() in the sandbox (sandbox/sitecustomize.py)
 
 
 def source_from_text(value: object):
@@ -182,18 +182,6 @@ class ScriptRun(Frozen):
     submitted: str | None = None
 
 
-def split_submission(stdout: str):
-    """The output without ``submit(...)`` marker lines, and the JSON of the last such call."""
-    kept: list[str] = []
-    submitted: str | None = None
-    for line in stdout.splitlines():
-        if line.startswith(SUBMIT_MARKER):
-            submitted = line.removeprefix(SUBMIT_MARKER)
-        else:
-            kept.append(line)
-    return "\n".join(kept), submitted
-
-
 class Accepted(Frozen):
     args: SubmitArgs
 
@@ -221,8 +209,10 @@ def check_submit(arguments: str, last: bool, locators_asked: bool, rejected_befo
     return Accepted(args=args)
 
 
-def solution(args: SubmitArgs, verified: frozenset[str], rules: tuple[str, ...], steps: int):
-    """The checked result: actions only with outcome OK, each defanged and vetted."""
+def solution(args: SubmitArgs, files: frozenset[str], verified: frozenset[str], rules: tuple[str, ...], steps: int):
+    """The checked result: the answer cleaned, sources only for workspace files, actions only with outcome OK, each
+    defanged and vetted."""
     actions = tuple(vet(a, verified, rules) for a in args.actions) if args.outcome == "OK" else ()
-    submission = Submission(outcome=args.outcome, answer=args.answer, sources=args.sources)
+    sources = tuple(s for s in args.sources if s.path in files)
+    submission = Submission(outcome=args.outcome, answer=clean_answer(args.answer), sources=sources)
     return Solution(submission=submission, actions=actions, steps=steps)
