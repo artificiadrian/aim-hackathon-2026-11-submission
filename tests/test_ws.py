@@ -8,7 +8,7 @@ import pytest
 import ws.formats
 from ws.files import cite, columns, grep, read, resolve
 from ws.models import Source as WsSource
-from ws.submit import as_sources, citation_notes
+from ws.submit import as_sources, citation_notes, plain
 
 from mcnulty.clients.arena import Source
 
@@ -50,7 +50,7 @@ def test_cite_with_a_column_a_file_does_not_have_still_cites(files: Path, capsys
 def test_columns_lists_the_header_of_every_table(files: Path):
     lines = columns(str(files)).splitlines()
     assert f"{files / 'r.csv'} line=1| request_id | actor" in lines
-    assert f"{files / 'a.jsonl'} line=1| keys: a" in lines
+    assert f"{files / 'a.jsonl'} line=1| keys: a (1 of 2), agent (1 of 2)" in lines
     assert f"{files / 'r.csv'}   e.g. RQ-1,ext" in lines
     assert all("n.md" not in line for line in lines)
 
@@ -93,3 +93,41 @@ def test_submit_checks_citations_against_the_files(files: Path):
     assert resolve(WsSource(path=str(files / "a.jsonl"), record="X")) == WsSource(
         path=str(files / "a.jsonl"), record="X"
     )
+
+
+def test_grep_shows_the_text_around_the_match_and_tells_what_it_skipped(
+    files: Path, capsys: pytest.CaptureFixture[str]
+):
+    """Audit A4: hit text was the first 300 characters, so a late match was hidden; a wrong path gave [] silently."""
+    (files / "long.md").write_text("x" * 2000 + " needle-42 " + "y" * 2000 + "\n", encoding="utf-8")
+    [hit] = grep("needle-42", str(files / "long.md"))
+    assert "needle-42" in hit.text
+    assert len(hit.text) <= 306
+    assert grep("needle-42", str(files / "nowhere")) == []
+    assert "no file or folder" in capsys.readouterr().err
+    assert len(grep("e", str(files), limit=1)) == 1
+    assert "stopped at 1 hits" in capsys.readouterr().err
+    assert repr(hit) == str(hit)
+
+
+def test_cite_prefers_whole_words(files: Path):
+    """Audit D: standby-01 also cited the rows of standby-010."""
+    (files / "s.md").write_text("standby-010 up\nstandby-01 down\n", encoding="utf-8")
+    assert [s.line for s in cite(str(files / "s.md"), "standby-01")] == [2]
+    assert [s.line for s in cite(str(files / "s.md"), "standby")] == [1, 2]
+    assert [s.line for s in cite(str(files / "s.md"), "andby-01")] == [1, 2]  # no whole word: anywhere
+
+
+def test_submit_takes_pandas_and_numpy_values():
+    """Audit D: a Series, an Index or pd.NA in submit(...) raised NotJson and the task lost its answer."""
+    import numpy as np
+    import pandas as pd  # pyright: ignore[reportMissingTypeStubs] - no stubs in the dev venv
+
+    answer = {"s": pd.Series(["a", "b"]), "i": pd.Index([1, 2]), "na": pd.NA, "n": np.int64(3), "a": np.array([1.5])}
+    assert json.loads(json.dumps(answer, default=plain)) == {
+        "s": ["a", "b"],
+        "i": [1, 2],
+        "na": None,
+        "n": 3,
+        "a": [1.5],
+    }

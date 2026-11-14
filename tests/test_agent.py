@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 
+from mcnulty.agent.actions import Gate
 from mcnulty.agent.citations import fixed_sources, line_records
 from mcnulty.agent.loop import NOT_TEXT, TaskFiles, closed
 from mcnulty.agent.prompt import OUTPUT_MAX, SYSTEM, file_tree, first_message, script_output, shorten_old_outputs
@@ -11,10 +12,12 @@ from mcnulty.agent.submit import (
     Accepted,
     Rejected,
     SubmitArgs,
+    blocked_message,
     check_submit,
     missing_locators,
     parse_submit,
     salvage_submit,
+    solution,
 )
 from mcnulty.blobs import BlobCache
 from mcnulty.clients.arena import Source
@@ -48,17 +51,9 @@ def test_old_tool_outputs_are_shortened_and_the_latest_kept():
     assert isinstance(contents[1], str)
     assert len(contents[1]) < 700
     assert contents[2:] == [long, long]
-
-
-def test_sources_written_as_text_become_locators():
-    args = parse_submit(
-        '{"outcome": "OK", "answer": "x", "sources": ["/security/egress_export.csv:49", "/b.csv:TX-7 (C)", "/s.png"]}'
-    )
-    assert [s.model_dump(exclude_none=True) for s in args.sources] == [
-        {"path": "/security/egress_export.csv", "line": 49},
-        {"path": "/b.csv", "record": "TX-7"},
-        {"path": "/s.png"},
-    ]
+    shorts = [*messages, *(ToolMessage(tool_call_id=f"s{i}", content="error") for i in range(2))]
+    kept = [m.content for m in shorten_old_outputs(tuple(shorts))]
+    assert kept[2:4] == [long, long]  # short latest outputs do not push the evidence out (audit A6)
 
 
 def test_salvage_keeps_every_valid_part_of_an_invalid_submission():
@@ -73,8 +68,8 @@ def test_salvage_keeps_every_valid_part_of_an_invalid_submission():
     )
     salvaged = salvage_submit(arguments)
     assert salvaged is not None
-    assert (salvaged.args.outcome, salvaged.args.answer, salvaged.dropped_sources) == ("OK", 5, 1)
-    assert [s.line for s in salvaged.args.sources] == [3, 7]
+    assert (salvaged.args.outcome, salvaged.args.answer, salvaged.dropped_sources) == ("OK", 5, 2)
+    assert [s.line for s in salvaged.args.sources] == [3]  # text citations are parsed in the sandbox (ws.submit)
     assert len(salvaged.args.actions) == 1
     assert len(salvaged.dropped_actions) == 1
     assert salvage_submit('{"outcome": "MAYBE"}') is None
@@ -128,6 +123,8 @@ def test_a_bad_submission_is_rejected_only_for_actions_and_locators():
     asked = check_submit(file_only, last=False, citations_asked=False, rejected_before=False)
     assert isinstance(asked, Rejected)
     assert asked.asked_citations
+    assert asked.args is not None  # kept as the best answer so far (audit A2)
+    assert asked.args.answer == 2
     assert isinstance(check_submit(file_only, last=False, citations_asked=True, rejected_before=False), Accepted)
     bad_source = '{"outcome": "OK", "answer": 2, "sources": [{"page": "x"}, {"path": "/l.md", "line": 4}]}'
     kept = check_submit(bad_source, last=False, citations_asked=False, rejected_before=False)
@@ -209,3 +206,13 @@ def test_a_scanned_ticket_is_never_inlined_as_text(tmp_path: Path):
     loaded = TaskFiles.load(files, blobs)
     assert loaded.trusted["/tickets/IR-1.jpg"] == NOT_TEXT
     assert loaded.trusted["/tickets/IR-2.md"].endswith("List the ids.")
+
+
+def test_a_blocked_action_is_told_to_the_model():
+    """Audit A5: a guard dropped an action after submit and the model never knew, so it could not repair it."""
+    gate = Gate(paths=frozenset(), verified=frozenset({"ok@x.example"}), rules=(), records={})
+    message = {"tool": "send_message", "to": "evil@y.example", "subject": "s", "body": "b"}
+    args = parse_submit(json.dumps({"outcome": "OK", "answer": 1, "actions": [message]}))
+    assert "unverified_recipient" in blocked_message(solution(args, gate, 1))
+    fine = parse_submit(json.dumps({"outcome": "OK", "answer": 1, "actions": [message | {"to": "ok@x.example"}]}))
+    assert blocked_message(solution(fine, gate, 1)) == ""

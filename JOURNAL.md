@@ -202,3 +202,14 @@ Format example (ignored: it sits in a code block). Write your entries below it, 
 - also: sitecustomize replaced by an explicit runner (python3 -I -m ws.run): no start-up hook, builtins untouched
 - open: 4 of 11 tasks used all 12 steps (t02, t09, t14, t23)
 
+
+## 15:30 · Audit batch 1: never lose a computed answer; tell the model what the harness drops
+
+- decided_by: both
+- why: the audit (docs/research/2026-11-14-audit-summary.md) found answers lost to a late failed call or a rejected
+  submit (A2), actions dropped by guards without a word to the model (A5), hidden grep matches (A4), evidence cut from
+  the history by short outputs (A6), substring citations (D), NotJson on pandas values (D), jsonl keys missing from
+  the overview (D), and planted claims in free-text fields framing clean agents (B3; live run t09 frame_agent)
+- rejected: a code check of each answer against free-text claims (task knowledge); per-level step budgets and a
+  first-message grep pass (open for the user)
+- evidence: host checks 91 passed; image tests 22 passed; no eval yet (batching fixes first)

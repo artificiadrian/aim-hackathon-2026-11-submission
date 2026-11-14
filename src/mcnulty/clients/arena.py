@@ -90,12 +90,6 @@ class Source(ModelInput):
     def locators(self):
         return (self.page, self.line, self.record, self.sheet, self.row, self.paragraph)
 
-    def covers(self, other: "Source"):
-        """``other`` has this path and every locator this citation sets (a path-only citation covers the file)."""
-        return self.path == other.path and all(
-            mine is None or mine == theirs for mine, theirs in zip(self.locators, other.locators, strict=True)
-        )
-
 
 class ToolResult(Open):
     """A tool-level problem (file not found, bad argument) is ``ok: false`` with an error, not an exception."""

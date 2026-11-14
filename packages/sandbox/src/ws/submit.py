@@ -5,7 +5,7 @@ stdout, so a cut output never loses it); the harness validates the last line (``
 import datetime
 import json
 import os
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import cast
 
 from pydantic import BaseModel, ValidationError
@@ -20,8 +20,8 @@ class NotJson(TypeError):
 
 
 def plain(value: object) -> object:  # json.dumps(default=...) takes any value back
-    """The helpers' models (a ``Hit`` as its source), numpy and pandas values (int64, Timestamp, arrays), dates, and
-    tuples or sets as plain JSON values."""
+    """The helpers' models (a ``Hit`` as its source), numpy and pandas values (int64, Timestamp, arrays, Series,
+    Index; ``pd.NA`` as null), dates, and tuples or sets as plain JSON values."""
     if isinstance(value, Hit):
         value = value.source  # a Hit cited as it is
     if isinstance(value, BaseModel):
@@ -30,10 +30,9 @@ def plain(value: object) -> object:  # json.dumps(default=...) takes any value b
         return value.isoformat()  # also pandas Timestamp
     if isinstance(value, set | frozenset | tuple):
         return list(value)  # pyright: ignore[reportUnknownArgumentType] - any items; json.dumps checks them
-    if type(value).__module__ == "numpy":
-        import numpy as np
-
-        return np.asarray(value).tolist()  # pyright: ignore[reportAny] - numpy's own nested lists
+    if type(value).__module__.split(".")[0] in {"numpy", "pandas"}:
+        tolist = cast("object", getattr(value, "tolist", None))  # arrays, scalars, Series, Index, extension arrays
+        return cast("Callable[[], object]", tolist)() if callable(tolist) else None  # pd.NA and the like: no value
     raise NotJson(value)
 
 

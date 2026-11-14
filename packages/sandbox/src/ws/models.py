@@ -50,6 +50,11 @@ class Source(BaseModel):
         query = "&".join(f"{k}={v}" for k, v in self.locators.items())
         return f"{self.path}#{query}" if query else self.path
 
+    @override
+    def __repr__(self):
+        """Short in printed lists too (``print(cite(...))``), not every field with ``=None``."""
+        return str(self)
+
     @classmethod
     def parse(cls, text: str):
         """A citation written as text: the exact form ``/a.csv#record=R-7``, and the loose forms models write:
@@ -107,3 +112,8 @@ class Hit(BaseModel):
     @override
     def __str__(self):
         return f"{self.source}| {self.text}"
+
+    @override
+    def __repr__(self):
+        """Short in printed lists too (``print(grep(...))``)."""
+        return str(self)

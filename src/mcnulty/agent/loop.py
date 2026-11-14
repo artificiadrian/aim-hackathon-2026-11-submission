@@ -36,7 +36,9 @@ from mcnulty.agent.submit import (
     RunPythonArgs,
     ScriptRun,
     Solution,
+    SubmitArgs,
     ViewImageArgs,
+    blocked_message,
     check_submit,
     solution,
 )
@@ -206,19 +208,25 @@ def loop(rec: Recorder, tools: Tools, task: Task, deadline: Deadline) -> Solutio
     ]
     citations_asked = False
     rejected_before = False
+    blocks_told = False
+    best: SubmitArgs | None = None  # the latest parsed submission, sent back for repair: kept if no better one comes
     for step in range(1, MAX_STEPS + 2):  # one more step only when the last one did not submit
         last = step >= MAX_STEPS or deadline.left() < LAST_CALL_LEFT
         if last:
             messages.append(UserMessage(content=LAST_STEP if step <= MAX_STEPS else LAST_RETRY))
-        reply = tools.llm.chat(
-            rec,
-            shorten_old_outputs(tuple(messages)),
-            tools=(RUN_PYTHON,) if last else TOOLS,
-            max_tokens=MAX_TOKENS,
-            reasoning_effort="none",
-            require_tool=last,
-            budget=max(deadline.left() - CALL_RESERVE, 10.0),
-        )
+        try:
+            reply = tools.llm.chat(
+                rec,
+                shorten_old_outputs(tuple(messages)),
+                tools=(RUN_PYTHON,) if last else TOOLS,
+                max_tokens=MAX_TOKENS,
+                reasoning_effort="none",
+                require_tool=last,
+                budget=max(deadline.left() - CALL_RESERVE, 10.0),
+            )
+        except LLMError as e:  # a failed call (budget, network, bad reply) must not lose a computed answer
+            rec.log(ToolFailed(tool="chat", error=ErrorInfo.from_exception(e)))
+            break
         choice = reply.choices[0]
         message = choice.message
         messages.append(AssistantMessage(content=message.content, tool_calls=message.tool_calls))
@@ -236,10 +244,17 @@ def loop(rec: Recorder, tools: Tools, task: Task, deadline: Deadline) -> Solutio
                 continue
             match check_submit(run.submitted, last, citations_asked, rejected_before):
                 case Accepted(args=args):
-                    return solution(args, gate, step)
-                case Rejected(message=reason, asked_citations=asked):
+                    solved = solution(args, gate, step)
+                    blocked = "" if last or blocks_told else blocked_message(solved)
+                    if not blocked:
+                        return solved
+                    blocks_told, best, reason = True, args, blocked
+                case Rejected(message=reason, asked_citations=asked, args=args):
                     citations_asked = citations_asked or asked
                     rejected_before = rejected_before or not asked
-                    output = f"{run.output}\n{reason}" if run.output else reason
-                    messages.append(ToolMessage(tool_call_id=call.id, content=output))
+                    best = args or best
+            output = f"{run.output}\n{reason}" if run.output else reason
+            messages.append(ToolMessage(tool_call_id=call.id, content=output))
+    if best is not None:
+        return solution(best, gate, MAX_STEPS + 1)
     return FALLBACK.model_copy(update={"steps": MAX_STEPS + 1})

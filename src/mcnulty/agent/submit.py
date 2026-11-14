@@ -14,19 +14,6 @@ from mcnulty.frozen import JSON, Frozen, ModelInput
 PATH_ONLY = (".png", ".jpg", ".jpeg", ".json")  # cited by path alone
 
 
-def source_from_text(value: object):
-    """Models often cite as text: ``"/a.csv:49"`` -> line 49, ``"/a.csv:R-7 (note)"`` -> record R-7."""
-    if not isinstance(value, str):
-        return value
-    path, _, rest = value.partition(":")
-    locator = rest.split(" (")[0].strip()
-    if not locator:
-        return {"path": path.strip()}
-    if locator.isdigit():
-        return {"path": path.strip(), "line": int(locator)}
-    return {"path": path.strip(), "record": locator}
-
-
 def normal_outcome(value: object):
     return value.strip().upper().replace(" ", "_") if isinstance(value, str) else value
 
@@ -46,7 +33,6 @@ def as_list(value: object):
 
 
 type ModelOutcome = Annotated[Outcome, BeforeValidator(normal_outcome)]
-type ModelSource = Annotated[Source, BeforeValidator(source_from_text)]
 
 
 class SubmitArgs(ModelInput):
@@ -54,7 +40,7 @@ class SubmitArgs(ModelInput):
 
     outcome: ModelOutcome
     answer: JsonValue = None
-    sources: Annotated[tuple[ModelSource, ...], BeforeValidator(as_list)] = ()
+    sources: Annotated[tuple[Source, ...], BeforeValidator(as_list)] = ()
     actions: Annotated[tuple[Action, ...], BeforeValidator(as_list)] = ()
     notes: tuple[str, ...] = ()  # citation problems found by submit(...) in the sandbox (ws.submit)
 
@@ -131,7 +117,7 @@ class Salvaged(Frozen):
     dropped_actions: tuple[str, ...]  # why each dropped action was invalid
 
 
-SOURCE: TypeAdapter[Source] = TypeAdapter(ModelSource)
+SOURCE: TypeAdapter[Source] = TypeAdapter(Source)
 ACTION: TypeAdapter[Action] = TypeAdapter(Action)
 
 
@@ -195,6 +181,7 @@ class Accepted(Frozen):
 class Rejected(Frozen):
     message: str
     asked_citations: bool = False
+    args: SubmitArgs | None = None  # the parsed submission, kept as the best answer so far
 
 
 def check_submit(arguments: str, last: bool, citations_asked: bool, rejected_before: bool) -> Accepted | Rejected:
@@ -208,7 +195,8 @@ def check_submit(arguments: str, last: bool, citations_asked: bool, rejected_bef
         if salvaged is None:
             return Rejected(message=f"not submitted, the outcome or the JSON is invalid: {e}")
         if salvaged.dropped_actions and not (last or rejected_before):
-            return Rejected(message="not submitted, invalid actions: " + "; ".join(salvaged.dropped_actions))
+            reason = "not submitted, invalid actions: " + "; ".join(salvaged.dropped_actions)
+            return Rejected(message=reason, args=salvaged.args)
         args = salvaged.args
     missing = missing_locators(args)
     problems = [*args.notes, *([missing_locators_message(missing)] if missing else [])]
@@ -218,8 +206,20 @@ def check_submit(arguments: str, last: bool, citations_asked: bool, rejected_bef
             f"not submitted yet; the citations need a look:\n{listed}\nFix them and submit again (submitting the "
             "same again keeps them)."
         )
-        return Rejected(message=message, asked_citations=True)
+        return Rejected(message=message, asked_citations=True, args=args)
     return Accepted(args=args)
+
+
+def blocked_message(solved: Solution):
+    """Why the guards block actions of a submission, for the model to repair once; empty when none is blocked."""
+    lines = [f"- {f.kind}: {f.detail}" for v in solved.actions if v.blocked for f in v.findings if f.blocks]
+    if not lines:
+        return ""
+    listed = "\n".join(lines)
+    return (
+        f"not submitted yet; the harness would not perform these actions:\n{listed}\nFix the actions (or leave out "
+        "those the task does not ask for) and submit again; submitting the same again drops them."
+    )
 
 
 def solution(args: SubmitArgs, gate: Gate, steps: int):
