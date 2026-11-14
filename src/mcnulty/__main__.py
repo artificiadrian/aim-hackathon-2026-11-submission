@@ -34,7 +34,6 @@ class Args(BaseModel):
     limit: int | None = None
     parallel: int = Field(default=12, ge=1)
     collect: bool = False
-    yes: bool = False
 
     @field_validator("levels")
     @classmethod
@@ -74,9 +73,6 @@ def parse_args(argv: list[str], default_kind: str | None):
         action="store_true",
         help="dev only: download everything, submit nothing, finish",
     )
-    p.add_argument(
-        "--yes", action="store_true", help="do not ask for confirmation on --kind final"
-    )
     ns = p.parse_args(argv)
     try:
         args = Args(
@@ -89,7 +85,6 @@ def parse_args(argv: list[str], default_kind: str | None):
             limit=ns.limit,
             parallel=ns.parallel,
             collect=ns.collect,
-            yes=ns.yes,
         )
     except (ValidationError, ValueError, re.error) as e:
         p.error(str(e))
@@ -116,9 +111,6 @@ def main():
     rec = Recorder(events=EventLog(run_dir=run_dir, secrets=settings.secrets))
     rec.log(CliStarted(argv=tuple(sys.argv[1:])))
 
-    confirm = args.kind == "final" and not args.yes and not settings.run_kind
-    if confirm and input("Type 'final' to start a final run: ").strip() != "final":
-        return 1
     arena = ArenaClient.connect(settings)
     llm = OpenRouterClient.connect(settings, CostTracker())
     try:
