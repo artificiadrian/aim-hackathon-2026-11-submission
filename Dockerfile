@@ -9,12 +9,12 @@
 
 # Pinned by digest (the tag can move between our build and the organisers' build).
 FROM python:3.12-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df
-COPY --from=ghcr.io/astral-sh/uv:0.9.11@sha256:5aa820129de0a600924f166aec9cb51613b15b68f1dcd2a02f31a500d2ede568 /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.13.8@sha256:5cc1805e2426484abca4ad46ea783bab281fdb225fd82d8ce6d66a81254bac85 /uv /usr/local/bin/uv
 
 # The sandbox libraries go into the system Python. The harness has its own /app/.venv, which does not see them, and
 # at start src/mcnulty/agent/sandbox.py copies this root filesystem (without /app, uv, ...) as the sandbox's root.
 RUN uv pip install --system --no-cache \
-        pandas==3.1.1 numpy==2.5.4 openpyxl==3.1.5 odfpy==1.4.1 python-docx==1.2.0 pypdf==6.20.0 \
+        pandas==3.1.1 numpy==2.5.4 openpyxl==3.1.5 odfpy==1.4.1 python-docx==1.2.0 pypdf==7.1.0 \
         pillow==13.0.0 tzdata==2026.6 pyyaml==6.0.3 pydantic==2.14.3 \
     && rm -rf /usr/local/bin/pip* /usr/local/lib/python3.12/site-packages/pip* /root/.cache \
     && python -c "import pandas, openpyxl, odf, docx, pypdf, PIL, yaml, pydantic, zoneinfo; zoneinfo.ZoneInfo('Europe/Berlin')"
