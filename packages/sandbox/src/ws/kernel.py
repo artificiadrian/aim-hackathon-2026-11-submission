@@ -117,6 +117,17 @@ def run_cell(cell: Cell, namespace: dict[str, object]):
     return 0
 
 
+def nowhere():
+    """A write-only fd whose writes go nowhere: /dev/null, or a pipe nobody reads when the sandbox has no /dev/null
+    (a container without the MKNOD capability); writes to the pipe fail and are dropped."""
+    try:
+        return os.open(os.devnull, os.O_WRONLY)
+    except OSError:
+        read_end, write_end = os.pipe()
+        os.close(read_end)
+        return write_end
+
+
 def main():
     sock = socket.socket(fileno=int(sys.argv[1]))
     sock.set_inheritable(False)  # sh(...) children never get the channel
@@ -124,7 +135,7 @@ def main():
     block_network()
     logging.getLogger("pypdf").setLevel(logging.ERROR)  # a warning per unmapped font buries the real output
     pid = os.getpid()
-    null = os.open(os.devnull, os.O_WRONLY)
+    null = nowhere()
     submit_fd = os.dup(null)  # a fixed number for the submit file of each cell
     os.environ["SUBMIT_FD"] = str(submit_fd)
     namespace: dict[str, object] = {"__name__": "__main__", **HELPERS}

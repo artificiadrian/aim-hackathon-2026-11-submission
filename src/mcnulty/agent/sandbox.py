@@ -176,8 +176,11 @@ def ensure_base(pool: SandboxPool):
         (partial / "tmp").mkdir()
         (partial / "tmp").chmod(0o1777)
         (partial / "dev").mkdir()
-        os.mknod(partial / "dev" / "null", stat.S_IFCHR | 0o666, os.makedev(1, 3))  # the only device in the sandbox
-        (partial / "dev" / "null").chmod(0o666)  # mknod applies the umask
+        try:
+            os.mknod(partial / "dev" / "null", stat.S_IFCHR | 0o666, os.makedev(1, 3))  # the only device in the sandbox
+            (partial / "dev" / "null").chmod(0o666)  # mknod applies the umask
+        except PermissionError:  # no MKNOD capability (the final container drops some, demo check 16:10)
+            pass  # the kernel falls back to a pipe; model code that opens /dev/null gets an error
         partial.rename(BASE)
 
 
