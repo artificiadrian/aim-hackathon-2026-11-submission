@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from mcnulty.agent.actions import tool_args
 from mcnulty.agent.loop import Deadline, solve
+from mcnulty.agent.sandbox import self_test
 from mcnulty.agent.submit import FALLBACK, Solution
 from mcnulty.clients.arena import (
     MAX_NOTE,
@@ -83,6 +84,11 @@ class Submitter(BaseModel):
     def send(self, task_rec: Recorder, task_id: str, submission: Submission):
         try:
             result = self.arena.submit(task_rec, self.run_id, task_id, submission)
+        except ArenaError as e:
+            task_rec.log(TaskCrashed.from_exception(e))
+            if e.status == 409:  # a submission is there already (a restart, or an earlier attempt that arrived)
+                return None, ("already submitted",)
+            return None, (f"submit failed: {e}",)
         except Exception as e:
             task_rec.log(TaskCrashed.from_exception(e))
             return None, (f"submit failed: {type(e).__name__}: {e}",)
@@ -124,6 +130,8 @@ def run_tasks(settings: Settings, args: RunArgs, started: float):
     manifest_files = {t.task_id: t.files for t in manifest.tasks}
     stats = arena.prefetch(rec, manifest, run.run_id)
     print(f"prefetch: {stats.blobs} files, {stats.downloaded} downloaded, {stats.failed} failed")
+    if not args.collect:
+        print(self_test(rec))
 
     submitter = Submitter(arena=arena, run_id=run.run_id)
     finished = threading.Event()

@@ -8,6 +8,7 @@ import threading
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
+import httpx
 import pytest
 from pydantic import TypeAdapter
 
@@ -15,7 +16,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 import mock_server  # pyright: ignore[reportImplicitRelativeImport] - given organiser code, loaded from tests/
 
 from mcnulty.blobs import BlobCache
+from mcnulty.clients.arena import ArenaClient, ArenaError
 from mcnulty.record.events import Envelope, HttpExchange, RunFinished, TaskFinished
+from mcnulty.record.log import EventLog, Recorder
 
 FAKE_ARENA_KEY = "arena_testsecret_0123456789"
 
@@ -99,3 +102,21 @@ def test_blob_cache_drops_damaged_files(tmp_path: Path):
     assert cache.get(sha) == data
     (tmp_path / sha).write_bytes(b"broken")
     assert cache.get(sha) is None
+
+
+def test_a_tool_call_that_may_have_arrived_is_not_sent_again(tmp_path: Path):
+    """Review OP6: a read timeout on a state-changing call must not repeat it (a second quarantine is a second act)."""
+    calls: list[str] = []
+
+    def handler(request: httpx.Request):
+        calls.append(request.url.path)
+        raise httpx.ReadTimeout("slow", request=request)
+
+    arena = ArenaClient(
+        http=httpx.Client(base_url="http://arena.test/api/v1", transport=httpx.MockTransport(handler)),
+        cache=BlobCache(root=tmp_path / "blobs"),
+    )
+    rec = Recorder(events=EventLog(run_dir=tmp_path / "run"))
+    with pytest.raises(ArenaError):
+        arena.call_tool(rec, "r", "t01", "containment", {"ops": []})
+    assert len(calls) == 1

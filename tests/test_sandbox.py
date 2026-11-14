@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from mcnulty.agent.sandbox import FSIZE, RECORD_MAX, SITECUSTOMIZE, TaskSandbox
+from mcnulty.agent.sandbox import FSIZE, RECORD_MAX, SITECUSTOMIZE, TaskSandbox, self_test
 from mcnulty.blobs import BlobCache
 from mcnulty.record.log import EventLog, Recorder
 
@@ -165,3 +165,7 @@ def test_catches_a_detached_child(box: TaskSandbox, rec: Recorder):
     result = box.run(rec, code, timeout=5)
     assert result.stdout.text.strip() == "parent done"
     assert result.seconds < 5
+
+
+def test_passes_the_self_test(rec: Recorder):
+    assert self_test(rec).startswith("sandbox ok ")

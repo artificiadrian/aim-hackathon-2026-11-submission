@@ -197,3 +197,19 @@ class TaskSandbox(Frozen):
 
     def remove(self):
         shutil.rmtree(self.root, ignore_errors=True)
+
+
+def self_test(rec: Recorder):
+    """One stdout line on whether model code can run here (only stdout comes back from the final container)."""
+    t0 = time.time()
+    try:
+        box = TaskSandbox.create(rec, "self-test", {}, BlobCache(root=TASKS / ".self-test-blobs"))
+        try:
+            run = box.run(rec, "import pandas, os; print(os.getuid())", timeout=60)
+        finally:
+            box.remove()
+    except Exception as e:
+        return f"sandbox FAILED: {type(e).__name__}: {str(e)[:200]}"
+    if run.exit_code != 0 or run.stdout.text.strip() != str(UID):
+        return f"sandbox FAILED: exit {run.exit_code}: {run.stderr.text.strip()[-200:]}"
+    return f"sandbox ok {time.time() - t0:.1f}s"

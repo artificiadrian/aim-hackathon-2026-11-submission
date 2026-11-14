@@ -21,6 +21,7 @@ type Outcome = Literal["OK", "DENIED_SECURITY", "NEEDS_CLARIFICATION", "UNSUPPOR
 type RunKind = Literal["dev", "final"]
 MAX_NOTE = 500  # characters in a run note
 RETRIES = 7
+NOT_RUN = frozenset({502, 503, 504})  # gateway answers: the request did not reach the Task API
 
 
 class Open(BaseModel):
@@ -180,9 +181,10 @@ class ArenaClient(BaseModel):
         )
         return cls(http=http, cache=BlobCache(root=settings.blob_cache))
 
-    def send(self, rec: Recorder, method: str, path: str, body: JsonValue = None):
+    def send(self, rec: Recorder, method: str, path: str, body: JsonValue = None, acts: bool = False):
         """Send with retries on network errors, 5xx and 429 (honouring Retry-After); raise ArenaError on other 4xx.
-        The retries span about 75 s: a gateway restart took about 7 s in the rehearsal."""
+        The retries span about 75 s: a gateway restart took about 7 s in the rehearsal. A request that ``acts``
+        (a tool call, a submit) is retried only when it surely did not run: no connection, 429, 502 to 504."""
         last = ArenaError(f"{method} {path}: no attempt")
         for attempt in range(RETRIES + 1):
             delay = min(2.0 * (1 << attempt), 15.0)
@@ -199,6 +201,8 @@ class ArenaClient(BaseModel):
                     )
                 )
                 last = PlatformUnreachable(e)
+                if acts and not isinstance(e, httpx.ConnectError | httpx.ConnectTimeout):
+                    raise last from e  # it may have arrived: never act twice
             else:
                 ms = int((time.time() - t0) * 1000)
                 response = rec.body(r.content, header(r, "content-type"))
@@ -218,7 +222,7 @@ class ArenaClient(BaseModel):
                 if r.status_code == 429:
                     last = ArenaError(message, 429)
                     delay = max(delay, min(retry_after(header(r, "retry-after")), 60.0))
-                elif r.status_code >= 500:
+                elif r.status_code >= 500 and not (acts and r.status_code not in NOT_RUN):
                     last = ArenaError(message, r.status_code)
                 else:
                     raise ArenaError(message, r.status_code)
@@ -250,7 +254,7 @@ class ArenaClient(BaseModel):
         tool: str,
         args: dict[str, JsonValue],
     ):
-        response = self.send(rec, "POST", f"/runs/{run_id}/tasks/{task_id}/tools/{tool}", args)
+        response = self.send(rec, "POST", f"/runs/{run_id}/tasks/{task_id}/tools/{tool}", args, acts=True)
         return ToolResult.model_validate_json(response.content)
 
     def run_manifest(self, rec: Recorder, run_id: str):
@@ -294,7 +298,7 @@ class ArenaClient(BaseModel):
         sources: list[JsonValue] = [s.model_dump(mode="json", exclude_none=True) for s in submission.sources]
         body: dict[str, JsonValue] = {"outcome": submission.outcome, "answer": submission.answer, "sources": sources}
         return SubmitResult.model_validate_json(
-            self.send(rec, "POST", f"/runs/{run_id}/tasks/{task_id}/submit", body).content
+            self.send(rec, "POST", f"/runs/{run_id}/tasks/{task_id}/submit", body).content  # a repeat gets 409
         )
 
     def finish(self, rec: Recorder, run_id: str):
