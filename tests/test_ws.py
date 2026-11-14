@@ -306,3 +306,11 @@ def test_sources_sort_among_strings_and_table_index_is_the_file_line(files: Path
     routed = pd.read_table(str(files / "changes.md"), sep="|")
     assert routed["change"].tolist() == ["revoke"]
     assert routed.index.tolist() == [3]
+
+
+def test_submit_puts_the_rows_that_hold_answer_values_in_place_of_a_bare_table_path(files: Path):
+    """Prompt review 2026-11-14: 7 of 8 forced last steps were sent back for citing a file without its row."""
+    bare = [WsSource(path=str(files / "r.csv")), WsSource(path=str(files / "x.json"))]
+    checked = check_citations(bare, ["RQ-2"], root=files)
+    assert [str(s) for s in checked.sources] == [f"{files / 'r.csv'}#record=RQ-2", str(files / "x.json")]
+    assert check_citations(bare[:1], ["nowhere-99"], root=files).sources == tuple(bare[:1])  # nothing holds it

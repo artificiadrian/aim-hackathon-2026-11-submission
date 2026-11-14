@@ -74,8 +74,8 @@ def main():
             if not isinstance(event, SandboxRan) or event.submitted is None or task is None:
                 continue
             payload = Payload.model_validate_json(event.submitted)
-            if not payload.notes:
-                continue
+            if not payload.notes and all(any(v is not None for v in s.locators) for s in payload.sources):
+                continue  # neither a note nor a bare path: nothing for the check to fix
             checked = replay(rec, pool, saved, task, payload)
             if checked is None:
                 continue

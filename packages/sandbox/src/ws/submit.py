@@ -125,6 +125,26 @@ def table_rows(values: list[str], root: Path):
 WORKSPACE = Path("/")
 
 
+LOCATED_MAX = 3  # units of one bare-path file put in its place, per answer value
+
+
+def located(source: Source, values: list[str]):
+    """A bare path to a table or text file, as the units of that file that hold an answer value: a citation needs
+    the unit (docs/ARENA_DOCS.md), and models cite the file they read (7 of 8 forced last steps were sent back for
+    bare paths, docs/research/2026-11-14-prompt-review.md). The path stays when no unit holds a value, and for json
+    (a path is a valid citation there) and other files (images, documents)."""
+    suffix = Path(source.path).suffix.lower()
+    if source.locators or suffix == ".json" or suffix not in (*TABLES, ".md", ".txt", ".log") or not values:
+        return [source]
+    try:
+        found = units(source.path)
+    except OSError:
+        return [source]
+    per_value = [[u.source for u in found if value in cells_of(u) or value in u.text.casefold()] for value in values]
+    picked = [resolve(unit) for units_ in per_value if 0 < len(units_) <= LOCATED_MAX for unit in units_]
+    return list(dict.fromkeys(picked)) or [source]
+
+
 class Checked(BaseModel):
     """The citations after the certain fixes, and what is left for the model to fix."""
 
@@ -142,10 +162,11 @@ def check_citations(sources: list[Source], answer: JsonValue, root: Path = WORKS
     is cited by its table row when exactly one row in the workspace holds it. The rest becomes notes: a missing unit
     that is the only citation, and values that several rows hold. Values in no table (counts, computed values) are
     not reported. Over-citing costs points (docs/ARENA_DOCS.md), so nothing is added on a guess."""
+    values = list(dict.fromkeys(answer_values(answer)))
     texts: list[str] = []
     kept: list[Source] = []
     gone: list[Source] = []
-    for source in sources:
+    for source in [unit for s in sources for unit in located(s, values)]:
         unit = read(source)
         if unit is None:
             gone.append(source)
@@ -154,7 +175,6 @@ def check_citations(sources: list[Source], answer: JsonValue, root: Path = WORKS
         if source.locators:
             texts.append(unit.casefold())
     notes = [f"{s} does not exist (check the path and the locator; text(path) shows them)" for s in gone if not kept]
-    values = list(dict.fromkeys(answer_values(answer)))
     missing = [v for v in values if not any(v in t for t in texts)][:HINT_VALUES]
     found = table_rows(missing, root)
     added = list(dict.fromkeys(rows[0] for rows in found.values() if len(rows) == 1 and rows[0] not in kept))
