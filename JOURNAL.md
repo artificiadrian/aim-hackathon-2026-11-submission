@@ -258,3 +258,10 @@ Format example (ignored: it sits in a code block). Write your entries below it, 
   removed; the inbox prompt line removed; the retry after the last step offers run_python and the JSON submit tool
 - rejected: keeping the recipient check (fails open on other names, so it does nothing on the final)
 - evidence: host 94 passed
+
+## 18:00 · One persistent Python session per task (kernel)
+
+- decided_by: both
+- why: eval 20261114T135828Z: 6 of 9 script failures were NameError on a variable from an earlier script (each script was a new process); every script reloaded its frames
+- rejected: Jupyter kernel (new dependency, more surface); pipes (a print flood or stray child blocks the harness); files in the task root (the task uid could swap them)
+- evidence: docs/ideas/persistent-kernel.md; 31 image tests pass; 12 kernels with pandas: 912 MB

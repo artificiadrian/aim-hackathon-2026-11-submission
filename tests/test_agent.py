@@ -96,6 +96,8 @@ def test_script_output_states_how_the_script_ended():
     assert script_output(sandbox_run(exit_code=1)).startswith("[script failed, exit code 1")
     assert "SIGXCPU (CPU time limit)" in script_output(sandbox_run(exit_code=-24))
     assert "timed out" in script_output(sandbox_run(exit_code=None))
+    restarted = sandbox_run("1\n").model_copy(update={"restarted": "idle"})
+    assert script_output(restarted).startswith("[session restarted (idle): variables are lost; /tmp is kept]\n[script")
 
 
 def test_script_output_keeps_stdout_and_stderr_apart():

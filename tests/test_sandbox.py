@@ -13,11 +13,11 @@ from pathlib import Path
 
 import pytest
 
-from mcnulty.agent.sandbox import FSIZE, RECORD_MAX, RUNNER, SandboxPool, TaskSandbox, self_test
+from mcnulty.agent.sandbox import FSIZE, KERNEL, RECORD_MAX, SandboxPool, TaskSandbox, kill_uid, self_test
 from mcnulty.blobs import BlobCache
 from mcnulty.record.log import EventLog, Recorder
 
-pytestmark = pytest.mark.skipif(not RUNNER.exists(), reason="the sandbox runs only inside the Docker image")
+pytestmark = pytest.mark.skipif(not KERNEL.exists(), reason="the sandbox runs only inside the Docker image")
 POOL = SandboxPool()
 CSV = b"id,actor,records\nR-1,ext,5\nR-2,int,7\n"
 
@@ -75,7 +75,7 @@ def test_passes_scratch_kept_between_runs(box: TaskSandbox, rec: Recorder):
         "open('/logs/new.txt', 'w').write('x')",  # add a file to the workspace
         "import os; os.remove('/logs/access/requests.csv')",
         "open('/usr/local/lib/python3.12/site-packages/evil.py', 'w').write('x')",  # change its own environment
-        "open('/usr/local/lib/python3.12/site-packages/ws/run.py', 'w').write('x')",
+        "open('/usr/local/lib/python3.12/site-packages/ws/kernel.py', 'w').write('x')",
     ],
 )
 def test_catches_writes_outside_scratch(box: TaskSandbox, rec: Recorder, code: str):
@@ -118,10 +118,10 @@ def test_catches_runaway_code(box: TaskSandbox, rec: Recorder):
 
 
 def test_passes_the_harness_keeps_its_network():
-    """The network block is installed only by ws.run inside the sandbox, never in the harness's process."""
+    """The network block is installed only by ws.kernel inside the sandbox, never in the harness's process."""
     import sys
 
-    assert "ws.run" not in sys.modules
+    assert "ws.kernel" not in sys.modules
     assert "ws.network" not in sys.modules
 
 
@@ -274,3 +274,105 @@ def test_passes_the_helpers_cite_every_format_with_its_locator(box: TaskSandbox,
         == "2 0"
     )
     assert run_ok(box, rec, "print(sh('sleep 5', timeout=0.5).exit_code)") == "None"
+
+
+# --- the kernel: one Python session per task -------------------------------------------------------------
+def uid_processes(uid: int):
+    """Live processes of ``uid``; a zombie (ended, exit status not yet read) holds no memory."""
+    found: list[int] = []
+    for status in Path("/proc").glob("[0-9]*/status"):
+        try:
+            lines = status.read_text().splitlines()
+        except OSError:
+            continue
+        fields = dict(line.split(":", 1) for line in lines if ":" in line)
+        if int(fields["Uid"].split()[0]) == uid and not fields["State"].strip().startswith("Z"):
+            found.append(int(status.parent.name))
+    return found
+
+
+def test_passes_variables_kept_between_cells(box: TaskSandbox, rec: Recorder):
+    first = box.run(rec, "x = 41")
+    second = box.run(rec, "print(x + 1)")
+    assert second.stdout.text == "42\n"
+    assert (first.cell, second.cell) == (1, 2)
+    assert first.restarted is None
+    assert second.restarted is None
+
+
+def test_passes_errors_and_exits_keep_the_session(box: TaskSandbox, rec: Recorder):
+    run_ok(box, rec, "x = 1")
+    failed = box.run(rec, "y = 2\n1 / 0")
+    assert failed.exit_code == 1
+    assert '<cell 2>", line 2' in failed.stderr.text
+    assert "1 / 0" in failed.stderr.text
+    assert "ws/kernel.py" not in failed.stderr.text
+    assert box.run(rec, "raise SystemExit(3)").exit_code == 3
+    assert run_ok(box, rec, "import os; os.chdir('/tmp'); print(x + y)") == "3"
+    assert run_ok(box, rec, "import os; print(os.getcwd())") == "/"
+    assert run_ok(box, rec, "print(open('/dev/null', 'w').write('x'), open('/dev/null').read() == '')") == "1 True"
+
+
+def test_passes_submit_read_only_from_its_own_cell(box: TaskSandbox, rec: Recorder):
+    assert box.run(rec, "x = 5").submitted is None
+    submitted = box.run(rec, "submit('OK', x)").submitted
+    assert submitted is not None
+    assert '"answer": 5' in submitted
+    assert box.run(rec, "print(x)").submitted is None
+
+
+def test_catches_a_timeout_and_restarts_with_a_note(box: TaskSandbox, rec: Recorder):
+    run_ok(box, rec, "x = 1; open('/tmp/kept', 'w').write('y')")
+    slow = box.run(rec, "while True: pass", timeout=2)
+    assert slow.timed_out
+    after = box.run(rec, "print('x' in globals(), open('/tmp/kept').read())")
+    assert after.stdout.text == "False y\n"
+    assert after.restarted == "the last cell timed out"
+    assert box.run(rec, "print(1)").restarted is None
+
+
+def test_catches_cpu_over_the_cell_limit(box: TaskSandbox, rec: Recorder):
+    limits = run_ok(box, rec, "import resource; print(*resource.getrlimit(resource.RLIMIT_CPU))")
+    soft, hard = (int(n) for n in limits.split())
+    assert hard == 900
+    assert soft <= 35
+    burn = "import resource\nresource.setrlimit(resource.RLIMIT_CPU, (1, 900))\nwhile True: pass"
+    killed = box.run(rec, burn, timeout=10)
+    assert killed.exit_code == -24  # SIGXCPU
+    assert not killed.timed_out
+    assert box.run(rec, "print(1)").restarted == "killed by SIGXCPU"
+
+
+def test_catches_a_forked_child_that_returns_to_the_kernel(box: TaskSandbox, rec: Recorder):
+    forked = box.run(rec, "import os\nchild = os.fork()\nprint('child' if child == 0 else 'parent')")
+    assert forked.exit_code == 0
+    assert run_ok(box, rec, "print('next')") == "next"
+
+
+def test_catches_a_print_flood_and_the_session_goes_on(box: TaskSandbox, rec: Recorder):
+    run_ok(box, rec, "x = 7")
+    box.run(rec, "while True: print('x' * 1000)", timeout=20)
+    assert run_ok(box, rec, "print(x)") == "7"
+
+
+def test_passes_an_idle_kernel_stops_and_restarts(rec: Recorder, tmp_path: Path):
+    sandbox = TaskSandbox.create(rec, POOL, "t-idle", {}, BlobCache(root=tmp_path / "none"), idle=1.0)
+    try:
+        run_ok(sandbox, rec, "x = 1")
+        time.sleep(2.5)
+        assert uid_processes(sandbox.uid) == []
+        after = sandbox.run(rec, "print('x' in globals())")
+        assert after.stdout.text == "False\n"
+        assert after.restarted == "idle"
+    finally:
+        sandbox.remove()
+
+
+def test_catches_processes_left_after_remove(rec: Recorder, tmp_path: Path):
+    sandbox = TaskSandbox.create(rec, POOL, "t-remove", {}, BlobCache(root=tmp_path / "none"))
+    uid = sandbox.uid
+    run_ok(sandbox, rec, "import threading, time; threading.Thread(target=time.sleep, args=(600,)).start()")
+    assert len(uid_processes(uid)) == 1
+    sandbox.remove()
+    assert uid_processes(uid) == []
+    kill_uid(uid)  # nothing left to kill

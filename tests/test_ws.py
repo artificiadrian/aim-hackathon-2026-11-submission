@@ -2,16 +2,23 @@
 accepts, and the helpers read every format. The chroot side is in tests/test_sandbox.py."""
 
 import json
+import os
+import socket
+import tempfile
+import threading
 from pathlib import Path
 
 import pandas as pd
 import pytest
 import ws.formats
+import ws.models
+from ws.channel import receive, send
 from ws.files import cite, columns, grep, read, resolve
 from ws.models import Source as WsSource
 from ws.submit import as_sources, citation_notes, plain
 from ws.tables import table
 
+from mcnulty.agent.sandbox import Cell, CellDone, receive_answer, send_cell
 from mcnulty.clients.arena import Source
 
 
@@ -164,3 +171,21 @@ def test_submit_names_the_uncited_table_rows_that_hold_answer_values(files: Path
     assert f"rq-2: {files / 'r.csv'}#record=RQ-2" in note
     assert "devops-07:" not in note  # held by a cited unit
     assert "total-3" not in note  # in no table
+
+
+def test_the_harness_and_the_kernel_agree_on_the_channel():
+    """The harness has its own copy of the wire format (its venv has no ws): both sides must read each other."""
+    harness, kernel = socket.socketpair()
+    with harness, kernel, tempfile.TemporaryFile() as file:
+        code = "print('x')\n" * 50_000  # longer than one socket buffer
+        cell = Cell(cell=3, code=code, cpu=30)
+        sender = threading.Thread(target=send_cell, args=(harness, cell, [file.fileno()] * 3))
+        sender.start()
+        data, fds = receive(kernel, fds=3)
+        sender.join()
+        for fd in fds:
+            os.close(fd)
+        assert ws.models.Cell.model_validate_json(data) == ws.models.Cell(cell=3, code=code, cpu=30)
+        assert len(fds) == 3
+        send(kernel, ws.models.CellDone(cell=3, exit_code=1).model_dump_json().encode("utf-8"))
+        assert receive_answer(harness) == CellDone(cell=3, exit_code=1)

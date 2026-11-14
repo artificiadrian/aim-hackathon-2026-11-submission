@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from mcnulty.agent.loop import MAX_STEPS, solve
-from mcnulty.agent.sandbox import RUNNER, SandboxPool
+from mcnulty.agent.sandbox import KERNEL, SandboxPool
 from mcnulty.blobs import BlobCache
 from mcnulty.clients.openrouter import CostTracker, OpenRouterClient
 from mcnulty.commands.evaluate import SavedRun
@@ -19,7 +19,7 @@ from mcnulty.settings import REPO_ROOT, load_settings
 
 SAVED = REPO_ROOT / "runs" / "20261114T101003Z"
 pytestmark = pytest.mark.skipif(
-    not (RUNNER.exists() and "OPENROUTER_API_KEY" in os.environ and (SAVED / "finish.json").exists()),
+    not (KERNEL.exists() and "OPENROUTER_API_KEY" in os.environ and (SAVED / "finish.json").exists()),
     reason="live: needs the Docker image, the keys and the saved run",
 )
 

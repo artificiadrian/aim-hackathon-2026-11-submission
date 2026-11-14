@@ -117,3 +117,23 @@ class Hit(BaseModel):
     def __repr__(self):
         """Short in printed lists too (``print(grep(...))``)."""
         return str(self)
+
+
+class Cell(BaseModel):
+    """One ``run_python`` call, sent from the harness to the task's kernel (``ws.kernel``); its stdout, stderr and
+    submit files come with it as file descriptors."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
+
+    cell: int
+    code: str
+    cpu: int  # CPU seconds this cell may use
+
+
+class CellDone(BaseModel):
+    """The kernel's answer after a cell: 0 ok, 1 an exception (traceback on stderr), k from ``SystemExit(k)``."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
+
+    cell: int
+    exit_code: int

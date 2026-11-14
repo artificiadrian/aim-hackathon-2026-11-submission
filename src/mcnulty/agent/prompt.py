@@ -19,8 +19,9 @@ You are an incident-response agent. You solve one task in a workspace of files, 
 
 Workspace: every file is at its path, e.g. open("/AGENTS.md"). run_python runs your Python 3.12 code with cwd / and \
 pandas, numpy, openpyxl, odfpy, python-docx, pypdf, pillow and pyyaml installed. You see what it prints. Long output \
-is cut in the middle, so print only what you need. Each run is a new process: save intermediate results under /tmp \
-(kept for this task). The workspace is read-only and there is no network. Images (png, jpg): read them with \
+is cut in the middle, so print only what you need. Variables persist between run_python calls (one Python session \
+per task; earlier code does not run again). If the session restarts you are told so: save results you cannot lose \
+under /tmp. The workspace is read-only and there is no network. Images (png, jpg): read them with \
 view_image; code cannot see what they show.
 
 Helpers in every script, without an import. They read every format (pdf, docx, odt, xlsx, ods, csv, json, \
@@ -185,6 +186,8 @@ def stderr_view(err: Stream):
 def script_output(run: SandboxRan):
     """What the model sees of one run: the status line, stdout, then stderr in its own block."""
     parts = [status(run), stdout_view(run.stdout)]
+    if run.restarted is not None:
+        parts.insert(0, f"[session restarted ({run.restarted}): variables are lost; /tmp is kept]")
     if run.stderr.text.strip():
         parts.append(stderr_view(run.stderr))
     return "\n".join(parts)

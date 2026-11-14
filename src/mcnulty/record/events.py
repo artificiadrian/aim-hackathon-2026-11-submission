@@ -234,6 +234,8 @@ class SandboxRan(Frozen):
     timed_out: bool
     started: bool = True  # False: no script slot came free in time; nothing ran
     tmp_cleared: bool = False  # /tmp was over its cap after the run and was emptied
+    cell: int = 0  # the number of this run in the task's Python session (0: before sessions were recorded)
+    restarted: str | None = None  # the session was started again before this run, and why ("idle", "killed by ...")
 
 
 class CheckResult(Frozen):

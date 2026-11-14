@@ -9,21 +9,27 @@ Layout in the container:
 - ``/sandbox/tasks/<task>``: one root per task, hard links to ``base`` (0.1 s, 4 MB) plus the task's files at their
   workspace paths, hard-linked from the blob cache when it is on the same filesystem (else copied).
 
-Each run: ``chroot`` into the task root as the task's own uid (``SandboxPool``), cwd ``/``, an environment without
-keys, resource limits and a wall-clock timeout. One uid per task: a task cannot signal, trace or starve another, and
-every process it leaves behind is killed after the run. At most ``SCRIPTS_AT_ONCE`` scripts run at the same time
-(2 CPUs); a script that waits too long does not start and says so. Workspace files and the system are root-owned and
-read-only; ``/tmp`` is the writable scratch folder, kept between the runs of a task and emptied above ``TMP_MAX``.
-``ws.run`` blocks the network in Python.
+One Python session per task, the kernel (``ws.kernel``): ``chroot`` into the task root as the task's own uid
+(``SandboxPool``), an environment without keys and resource limits. Each run is a cell of that session: variables
+persist, earlier cells never run again. A cell has a wall-clock timeout and ``CPU_PER_CELL`` CPU seconds; a kernel
+that dies (timeout, CPU, memory, crash) or stopped after ``IDLE_MAX`` seconds without a cell is started again at the
+next cell, and that run says why (``SandboxRan.restarted``). One uid per task: a task cannot signal, trace or starve
+another, and every other process of the uid is killed after each cell. At most ``SCRIPTS_AT_ONCE`` cells run at the
+same time (2 CPUs); a cell that waits too long does not start and says so. Workspace files and the system are
+root-owned and read-only; ``/tmp`` is the writable scratch folder, kept for the task and emptied above ``TMP_MAX``.
+``ws.kernel`` blocks the network in Python.
 
-Output: stdout, stderr and ``submit(...)`` calls go to three anonymous files of the harness, never pipes. The file
-size limit stops a print flood at ``FSIZE``, the harness reads only head and tail, and a child that leaves the process
-group holds no pipe the harness waits on.
+Channel: a Unix socket pair (``ws.channel``). Per cell the harness sends the code with three anonymous files of its
+own (stdout, stderr, ``submit(...)`` calls), never pipes, as file descriptors; the kernel answers with the exit code.
+The file size limit stops a print flood at ``FSIZE``, the harness reads only head and tail, and a child that leaves
+the process group holds no pipe the harness waits on. The harness never reads a file the task uid can change.
 """
 
 import os
 import shutil
 import signal
+import socket
+import stat
 import subprocess
 import tempfile
 import threading
@@ -33,11 +39,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import BinaryIO
 
+from pydantic import ValidationError
+
 from mcnulty.blobs import BlobCache
+from mcnulty.frozen import Frozen
 from mcnulty.record.events import FileSkipped, SandboxRan, Stream
 from mcnulty.record.log import Recorder
 
-RUNNER = Path("/usr/local/lib/python3.12/site-packages/ws/run.py")  # packages/sandbox, only in the Docker image
+KERNEL = Path("/usr/local/lib/python3.12/site-packages/ws/kernel.py")  # packages/sandbox, only in the Docker image
 BASE = Path("/sandbox/base")
 COPIED = ("bin", "sbin", "lib", "lib32", "lib64", "libx32", "usr", "etc")  # those the root has; links stay links
 NOT_IN_SANDBOX = ("usr/local/bin/uv",)
@@ -47,11 +56,15 @@ UIDS = 64  # tasks with a sandbox at the same time
 SCRIPTS_AT_ONCE = 3  # the final container has 2 CPUs; pandas imports alone take about 1 CPU second
 SLOT_WAIT = 90.0  # seconds a script waits for a slot before it gives up
 TMP_MAX = 256 * 1024 * 1024  # bytes in a task's /tmp before it is emptied (4 GB disk, 12 tasks at once)
-TIMEOUT = 30.0  # seconds, wall clock
+TIMEOUT = 30.0  # seconds, wall clock per cell
+CPU_PER_CELL = 30  # CPU seconds per cell (the kernel lowers its soft limit before each cell)
+CPU_PER_KERNEL = 900  # CPU seconds in the life of one kernel
+IDLE_MAX = 120.0  # seconds without a cell before a kernel exits and frees its memory
+IDLE_EXIT = 75  # the kernel's exit code when it stops for idleness (ws.kernel)
 FSIZE = 16 * 1024 * 1024  # bytes per written file, also per output stream
 LIMITS = (
     "--as=1500000000",  # bytes of address space
-    "--cpu=30",  # CPU seconds
+    f"--cpu={CPU_PER_CELL}:{CPU_PER_KERNEL}",
     f"--fsize={FSIZE}",
     "--nproc=64",  # processes of the task's uid
     "--nofile=256",
@@ -65,6 +78,54 @@ ENV = {
     "OMP_NUM_THREADS": "1",
 }
 RECORD_MAX = 200_000  # bytes of each stream kept in the record and in memory (head and tail)
+
+
+HEADER = 4  # bytes of the big-endian length before each message on the channel (``ws.channel``, same format)
+ANSWER_MAX = 4096  # bytes of a kernel answer; a longer one is a broken channel
+
+
+class Cell(Frozen):
+    """One cell for the kernel; ``ws.models.Cell`` on the other side (the harness's venv has no ``ws``)."""
+
+    cell: int
+    code: str
+    cpu: int
+
+
+class CellDone(Frozen):
+    """The kernel's answer after a cell; ``ws.models.CellDone`` on the other side."""
+
+    cell: int
+    exit_code: int
+
+
+class ChannelClosed(EOFError):
+    def __init__(self):
+        super().__init__("the kernel closed the channel or sent a broken answer")
+
+
+def send_cell(channel: socket.socket, cell: Cell, fds: list[int]):
+    data = cell.model_dump_json().encode("utf-8")
+    framed = len(data).to_bytes(HEADER, "big") + data
+    sent = socket.send_fds(channel, [framed], fds)
+    channel.sendall(framed[sent:])
+
+
+def read_exact(channel: socket.socket, size: int):
+    data = b""
+    while len(data) < size:
+        chunk = channel.recv(size - len(data))
+        if not chunk:
+            raise ChannelClosed
+        data += chunk
+    return data
+
+
+def receive_answer(channel: socket.socket):
+    size = int.from_bytes(read_exact(channel, HEADER), "big")
+    if size > ANSWER_MAX:
+        raise ChannelClosed
+    return CellDone.model_validate_json(read_exact(channel, size))  # the kernel is untrusted: parse its answer
 
 
 class SandboxUnavailable(RuntimeError):
@@ -102,7 +163,7 @@ def ensure_base(pool: SandboxPool):
     with pool.base_lock:
         if BASE.exists():
             return
-        if not RUNNER.exists():
+        if not KERNEL.exists():
             raise SandboxUnavailable
         partial = BASE.with_name("base.partial")
         shutil.rmtree(partial, ignore_errors=True)
@@ -113,6 +174,9 @@ def ensure_base(pool: SandboxPool):
             (partial / name).unlink(missing_ok=True)
         (partial / "tmp").mkdir()
         (partial / "tmp").chmod(0o1777)
+        (partial / "dev").mkdir()
+        os.mknod(partial / "dev" / "null", stat.S_IFCHR | 0o666, os.makedev(1, 3))  # the only device in the sandbox
+        (partial / "dev" / "null").chmod(0o666)  # mknod applies the umask
         partial.rename(BASE)
 
 
@@ -141,13 +205,34 @@ def last_submission(file: BinaryIO):
     return calls[-1] if calls else None
 
 
-def kill_uid(uid: int):
-    """SIGKILL every process whose real uid is ``uid`` (children that left the process group too)."""
+def kill_uid(uid: int, keep: int | None = None):
+    """SIGKILL every process whose real uid is ``uid`` (children that left the process group too), but ``keep``."""
     for status in Path("/proc").glob("[0-9]*/status"):
         with suppress(OSError):
             uid_line = next(line for line in status.read_text().splitlines() if line.startswith("Uid:"))
-            if int(uid_line.split()[1]) == uid:
-                os.kill(int(status.parent.name), signal.SIGKILL)
+            pid = int(status.parent.name)
+            if int(uid_line.split()[1]) == uid and pid != keep:
+                os.kill(pid, signal.SIGKILL)
+
+
+def end_reason(exit_code: int):
+    """Why a kernel ended, in words for the model."""
+    if exit_code == IDLE_EXIT:
+        return "idle"
+    if exit_code < 0:
+        return f"killed by {signal.Signals(-exit_code).name}"
+    return f"exited with code {exit_code}"
+
+
+@dataclass(slots=True)
+class Session:
+    """The task's kernel and the harness's end of its channel. Not frozen: it counts cells and restarts the kernel."""
+
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    process: subprocess.Popen[bytes] | None = None
+    channel: socket.socket | None = None
+    cells: int = 0
+    lost: str | None = None  # why the kernel ended during the last cell; told at the next start
 
 
 def tree_bytes(folder: Path):
@@ -169,9 +254,19 @@ class TaskSandbox:
     root: Path
     uid: int
     pool: SandboxPool
+    idle: float = IDLE_MAX
+    session: Session = field(default_factory=Session)
 
     @classmethod
-    def create(cls, rec: Recorder, pool: SandboxPool, task_id: str, files: dict[str, str], blobs: BlobCache):
+    def create(
+        cls,
+        rec: Recorder,
+        pool: SandboxPool,
+        task_id: str,
+        files: dict[str, str],
+        blobs: BlobCache,
+        idle: float = IDLE_MAX,
+    ):
         """A fresh root for one task with its files (path -> sha256) at their workspace paths, read-only.
 
         Paths are data: one that leaves the task root (``..``, or a link in the system folders) is skipped, since the
@@ -197,11 +292,10 @@ class TaskSandbox:
             target = folder / relative.name
             target.unlink(missing_ok=True)  # a system file at a workspace path: never write through its hard link
             place(source, target)
-        return cls(root=root, uid=pool.take_uid(), pool=pool)
+        return cls(root=root, uid=pool.take_uid(), pool=pool, idle=idle)
 
     def run(self, rec: Recorder, code: str, timeout: float = TIMEOUT, wait: float = SLOT_WAIT):
-        """Run ``code`` with ``python -I`` as the task's uid in the task root, when a script slot is free; log and
-        return the result."""
+        """Run ``code`` as the next cell of the task's kernel, when a script slot is free; log and return the result."""
         t0 = time.time()
         if not self.pool.slots.acquire(timeout=wait):
             event = not_started(code, time.time() - t0)
@@ -215,10 +309,59 @@ class TaskSandbox:
         return event
 
     def run_now(self, code: str, timeout: float):
+        session = self.session
+        with session.lock:
+            session.cells += 1
+            cell = Cell(cell=session.cells, code=code, cpu=CPU_PER_CELL)
+            t0 = time.time()
+            with (
+                tempfile.TemporaryFile() as out,
+                tempfile.TemporaryFile() as err,
+                tempfile.TemporaryFile() as calls,
+            ):
+                restarted: str | None = None
+                exit_code: int | None = None
+                timed_out = False
+                for _ in range(2):  # a kernel that stopped for idleness just as the cell came: start it, send again
+                    restarted = self.start_kernel(out, err) or restarted
+                    exit_code, timed_out = self.exchange(cell, (out, err, calls), t0 + timeout)
+                    if session.lost != "idle":
+                        break
+                alive = session.process.pid if session.process is not None else None
+                kill_uid(self.uid, keep=alive)  # children the cell left behind; the kernel stays
+                tmp = self.root / "tmp"
+                tmp_cleared = tree_bytes(tmp) > TMP_MAX
+                if tmp_cleared:
+                    shutil.rmtree(tmp, ignore_errors=True)
+                    tmp.mkdir()
+                    tmp.chmod(0o1777)
+                return SandboxRan(
+                    code=code,
+                    stdout=read_stream(out),
+                    stderr=read_stream(err),
+                    submitted=last_submission(calls),
+                    exit_code=exit_code,
+                    seconds=round(time.time() - t0, 3),
+                    timed_out=timed_out,
+                    tmp_cleared=tmp_cleared,
+                    cell=cell.cell,
+                    restarted=restarted,
+                )
+
+    def start_kernel(self, out: BinaryIO, err: BinaryIO):
+        """Start the kernel when none runs, with stdout and stderr on this cell's files (so start-up errors show
+        there); why the last one ended, or None when it runs or this is the first."""
+        session = self.session
+        if session.process is not None and session.process.poll() is None:
+            return None
+        reason = session.lost
+        if session.process is not None:  # it ended between cells (idle)
+            reason = end_reason(session.process.returncode)
+            self.stop_kernel()
         command = [
             "/usr/bin/choom",
             "-n",
-            "1000",  # out of memory: the kernel kills a script before the harness
+            "1000",  # out of memory: the kernel kills the task's session before the harness
             "--",
             "/usr/bin/prlimit",
             *LIMITS,
@@ -229,49 +372,58 @@ class TaskSandbox:
             "/usr/local/bin/python3",
             "-I",
             "-m",
-            "ws.run",  # the code comes on stdin; ws.run blocks the network and adds the helpers
+            "ws.kernel",  # blocks the network, adds the helpers, then runs the cells that come over the socket
         ]
-        t0 = time.time()
-        with (
-            tempfile.TemporaryFile() as out,
-            tempfile.TemporaryFile() as err,
-            tempfile.TemporaryFile() as calls,
-        ):
-            with subprocess.Popen(  # noqa: S603 - running untrusted code in the isolated child is the purpose
-                command,
-                stdin=subprocess.PIPE,
+        mine, theirs = socket.socketpair()
+        with theirs:
+            session.process = subprocess.Popen(  # noqa: S603 - running untrusted code in the isolated child is the purpose
+                [*command, str(theirs.fileno()), str(self.idle)],
+                stdin=subprocess.DEVNULL,
                 stdout=out,
                 stderr=err,
-                pass_fds=(calls.fileno(),),
-                env={**ENV, "SUBMIT_FD": str(calls.fileno())},
+                pass_fds=(theirs.fileno(),),
+                env=ENV,
                 start_new_session=True,  # its own process group, so one kill ends its children too
-            ) as child:
-                try:
-                    child.communicate(code.encode("utf-8"), timeout=timeout)
-                    exit_code, timed_out = child.returncode, False
-                except subprocess.TimeoutExpired:
-                    exit_code, timed_out = None, True
-                kill_uid(self.uid)  # also children that left the process group
-                child.wait()
-            tmp = self.root / "tmp"
-            tmp_cleared = tree_bytes(tmp) > TMP_MAX
-            if tmp_cleared:
-                shutil.rmtree(tmp, ignore_errors=True)
-                tmp.mkdir()
-                tmp.chmod(0o1777)
-            return SandboxRan(
-                code=code,
-                stdout=read_stream(out),
-                stderr=read_stream(err),
-                submitted=last_submission(calls),
-                exit_code=exit_code,
-                seconds=round(time.time() - t0, 3),
-                timed_out=timed_out,
-                tmp_cleared=tmp_cleared,
             )
+        session.channel = mine
+        session.lost = None
+        return reason
+
+    def exchange(self, cell: Cell, files: tuple[BinaryIO, BinaryIO, BinaryIO], deadline: float):
+        """Send the cell with its files and wait for the answer until ``deadline``: (exit code, timed out). A kernel
+        that does not answer is stopped and ``session.lost`` says why."""
+        session = self.session
+        if session.channel is None:
+            raise ChannelClosed
+        try:
+            session.channel.settimeout(max(0.01, deadline - time.time()))
+            send_cell(session.channel, cell, [f.fileno() for f in files])
+            done = receive_answer(session.channel)
+            if done.cell == cell.cell:
+                return done.exit_code, False
+            reason = f"answered for cell {done.cell}, not {cell.cell}"
+        except TimeoutError:
+            self.stop_kernel()
+            session.lost = "the last cell timed out"
+            return None, True
+        except (OSError, ChannelClosed, ValidationError) as e:
+            reason = type(e).__name__
+        exit_code = self.stop_kernel()
+        session.lost = end_reason(exit_code) if exit_code is not None else reason
+        return exit_code, False
+
+    def stop_kernel(self):
+        """Close the channel and kill every process of the uid; the kernel's exit code."""
+        session = self.session
+        if session.channel is not None:
+            session.channel.close()
+            session.channel = None
+        kill_uid(self.uid)
+        process, session.process = session.process, None
+        return process.wait() if process is not None else None
 
     def remove(self):
-        kill_uid(self.uid)
+        self.stop_kernel()
         shutil.rmtree(self.root, ignore_errors=True)
         self.pool.give_uid(self.uid)
 
