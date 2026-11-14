@@ -5,9 +5,9 @@ import sys
 from collections import Counter
 from collections.abc import Iterable
 from pathlib import Path
-from typing import cast
+from typing import cast, final, override
 
-from ws.formats import JSON, read_text, units, visible
+from ws.formats import JSON, read_text, units, visible, with_decoded
 from ws.models import Hit, Source, Unit
 
 SKIPPED = frozenset({"bin", "sbin", "lib", "lib32", "lib64", "libx32", "usr", "etc", "tmp", "proc", "dev"})
@@ -39,7 +39,19 @@ def text(path: str, limit: int | None = 200):
     shown = found if limit is None else found[:limit]
     left = len(found) - len(shown)
     more = f"\n[... {left} more units: text(path, limit=None), or grep]" if left else ""
-    return "\n".join(f"{u.source.where}| {u.text}" for u in shown) + more
+    return Lines("\n".join(f"{u.source.where}| {with_decoded(u.text)}" for u in shown) + more)
+
+
+@final
+class Lines(str):
+    """``text()``'s result: it prints as the text, and a for loop goes over its lines, not its characters (eval
+    20261114T142425Z, t26 printed a policy one character per line)."""
+
+    __slots__ = ()
+
+    @override
+    def __iter__(self):
+        return iter(self.splitlines())
 
 
 def cite(path: str, value: object = None, column: str | None = None):
@@ -192,10 +204,11 @@ def grep(pattern: str, *paths: str, regex: bool = False, limit: int = 100):
             print(f"grep: could not read {file} ({type(e).__name__})", file=sys.stderr)
             continue
         for unit in found:
-            match = search.search(unit.text)
+            shown = with_decoded(unit.text)  # a match in decoded base64 counts
+            match = search.search(shown)
             if match is None:
                 continue
-            hits.append(Hit(source=unit.source, text=snippet(unit.text, match.start())))
+            hits.append(Hit(source=unit.source, text=snippet(shown, match.start())))
             if len(hits) >= limit:
                 print(f"grep: stopped at {limit} hits; pass limit= or narrower paths for more", file=sys.stderr)
                 return hits

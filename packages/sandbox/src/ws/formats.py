@@ -8,6 +8,7 @@ headings count); pdf -> page; png, jpg -> path only (no units).
 Parsed files are cached under ``/tmp/.ws`` (kept for the task), so a second search does not parse every pdf again.
 """
 
+import base64
 import csv
 import functools
 import io
@@ -105,9 +106,50 @@ def pdf_units(path: str):
     return [Unit(source=Source(path=path, page=n), text=page.extract_text() or "") for n, page in enumerate(pages, 1)]
 
 
+TABLE_ROW = re.compile(r"^\s*\|(.+)\|\s*$")  # a markdown table row
+RULE_ROW = re.compile(r"^[\s|:-]+$")  # the |---|---| line under a markdown header
+
+
+def table_cells(line: str):
+    """A markdown table row as its cells; none for the rule line and for every other line."""
+    found = TABLE_ROW.match(line)
+    if found is None or RULE_ROW.match(line):
+        return ()
+    return tuple(cell.strip() for cell in found.group(1).split("|"))
+
+
 def line_units(path: str):
     lines = read_text(path).splitlines()
-    return [Unit(source=Source(path=path, line=n), text=line) for n, line in enumerate(lines, 1)]
+    return [
+        Unit(source=Source(path=path, line=n), text=line, cells=table_cells(line)) for n, line in enumerate(lines, 1)
+    ]
+
+
+BASE64 = re.compile(r"(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{16,}={0,2}(?![A-Za-z0-9+/=])")
+DECODED_MIN = 4  # characters of decoded text worth showing
+
+
+def decoded(token: str):
+    """The text a base64 token encodes; None when it is not base64 of readable text (ids, hashes, words)."""
+    if len(token) % 4:
+        return None
+    try:
+        raw = base64.b64decode(token, validate=True).decode("utf-8")
+    except ValueError:  # also UnicodeDecodeError and binascii.Error
+        return None
+    letters = sum(c.isalpha() or c.isspace() for c in raw)
+    return raw if len(raw) >= DECODED_MIN and raw.isprintable() and letters >= 0.6 * len(raw) else None
+
+
+def with_decoded(text: str):
+    """``text`` with a decoded copy after each base64 token of readable text: encoded posts hide words from keyword
+    search (eval 20261114T142425Z, t10)."""
+
+    def show(found: re.Match[str]):
+        raw = decoded(found.group(0))
+        return found.group(0) if raw is None else f"{found.group(0)} [base64: {raw}]"
+
+    return BASE64.sub(show, text)
 
 
 READERS = {

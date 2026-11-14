@@ -20,11 +20,12 @@ import traceback
 
 from ws.channel import ChannelClosed, receive, send
 from ws.files import cite, columns, grep, read, text
+from ws.hints import code_tip, error_hint
 from ws.models import Cell, CellDone
 from ws.network import block_network
 from ws.shell import sh
 from ws.submit import submit
-from ws.tables import route_pandas, table
+from ws.tables import lenient_pandas, route_pandas, table
 
 
 class NotPython(RuntimeError):
@@ -54,6 +55,7 @@ def wide_pandas():
     for option, value in (("display.width", 250), ("display.max_columns", 50), ("display.max_colwidth", 80)):
         pd.set_option(option, value)
     route_pandas()
+    lenient_pandas()
 
 
 def uses_pandas(code: str):
@@ -99,12 +101,18 @@ def run_cell(cell: Cell, namespace: dict[str, object]):
     """Run one cell; tracebacks show its lines (``<cell n>``) and leave out the kernel's own frame."""
     name = f"<cell {cell.cell}>"
     linecache.cache[name] = (len(cell.code), None, cell.code.splitlines(keepends=True), name)
+    tip = code_tip(cell.code)
+    if tip is not None:
+        print(tip, file=sys.stderr)
     try:
         exec(compile(cell.code, name, "exec"), namespace)  # noqa: S102 - running the model's code is the purpose
     except SystemExit as stop:
         return exit_code(stop)
     except BaseException as e:
         traceback.print_exception(type(e), e, e.__traceback__.tb_next if e.__traceback__ else None)
+        hint = error_hint(e, namespace) if isinstance(e, Exception) else None
+        if hint is not None:
+            print(hint, file=sys.stderr)
         return 1
     return 0
 

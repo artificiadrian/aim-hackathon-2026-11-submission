@@ -5,9 +5,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
-from ws.formats import JSON, units
+from ws.formats import JSON, TABLE_ROW, units
 
 SOURCE_COLUMN = "_source"
+TABLE_FORMATS = "csv, jsonl, json, xlsx, ods and markdown tables"
 
 
 def table(path: str, sheet: str | None = None):
@@ -25,6 +26,8 @@ def table(path: str, sheet: str | None = None):
         if sheet is not None and where.sheet != sheet:
             continue
         if not unit.cells:  # json, jsonl: one object per unit
+            if where.line is not None and not TABLE_ROW.match(unit.text):
+                headers.pop(where.sheet, None)  # a line outside a markdown table ends that table
             try:
                 value = JSON.validate_json(unit.text)
             except ValueError:
@@ -44,6 +47,8 @@ def table(path: str, sheet: str | None = None):
     names = list(dict.fromkeys(name for row in rows for name in row))
     kept = (SOURCE_COLUMN, "_sheet")
     columns = {n: [r.get(n) for r in rows] if n in kept else typed_column([r.get(n) for r in rows]) for n in names}
+    if not rows:
+        print(f"table: no rows in {path}: no header row with two or more cells ({TABLE_FORMATS})", file=sys.stderr)
     return pd.DataFrame(columns)
 
 
@@ -121,3 +126,24 @@ def route_pandas():
 
     for name in ("read_csv", "read_excel", "read_json"):
         setattr(pd, name, routed(name))
+
+
+def lenient_pandas():
+    """``tz_localize(zone)`` on values that already carry an offset converts them to ``zone`` instead of raising
+    "Already tz-aware" (eval 20261114T142425Z, t12): the offset in the data wins over the model's guess of the zone,
+    and the instant stays the same."""
+    from pandas import DatetimeIndex
+    from pandas.core.indexes.accessors import DatetimeProperties
+
+    for owner in (DatetimeProperties, DatetimeIndex):
+        original = cast("Callable[..., object]", owner.tz_localize)
+
+        def tz_localize(
+            self: object, tz: object, *args: object, original: Callable[..., object] = original, **keywords: object
+        ):
+            if tz is not None and getattr(self, "tz", None) is not None:
+                convert = cast("Callable[[object], object]", getattr(self, "tz_convert"))  # noqa: B009 - typed here
+                return convert(tz)
+            return original(self, tz, *args, **keywords)
+
+        setattr(owner, "tz_localize", tz_localize)  # noqa: B010 - pandas' class has no typed slot for it

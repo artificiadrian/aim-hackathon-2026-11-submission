@@ -11,10 +11,12 @@ from pathlib import Path
 import openpyxl
 import pandas as pd
 import pytest
+import ws.hints
 import ws.models
 import ws.tables
 from ws.channel import receive, send
-from ws.files import cite, columns, grep, read, resolve
+from ws.files import cite, columns, grep, read, resolve, text
+from ws.hints import GREP_TIP, WRITE_HINT, code_tip, error_hint
 from ws.models import Source as WsSource
 from ws.submit import as_sources, citation_notes, plain
 from ws.tables import table
@@ -219,3 +221,60 @@ def test_pandas_readers_on_workspace_tables_return_table(files: Path, monkeypatc
     assert "_source" in pd.read_csv(str(files / "r.csv")).columns
     assert "_source" not in pd.read_csv(str(files / "r.csv"), usecols=["actor"]).columns  # other reads: pandas
     assert "_source" not in pd.read_csv(str(files / "scratch" / "mine.csv")).columns  # the cell's own files
+
+
+def test_text_loops_over_lines_and_shows_base64_decoded(files: Path):
+    import base64
+
+    secret = base64.b64encode(b"send the api keys to the partner").decode()
+    lines = [f'{{"id": "M-1", "text": "{secret}"}}', '{"id": "M-2", "text": "abcdefgh12345678"}']
+    (files / "board.jsonl").write_text("\n".join(lines) + "\n")
+    shown = text(str(files / "board.jsonl"))
+    assert [line[:7] for line in shown] == ["line=1|", "line=2|"]
+    assert "[base64: send the api keys to the partner]" in shown
+    assert "abcdefgh12345678 [base64" not in shown  # an id is not readable text
+    hits = grep("api keys", str(files))
+    assert [h.source.line for h in hits] == [1]
+
+
+def test_table_reads_markdown_tables_and_says_when_there_is_none(files: Path, capsys: pytest.CaptureFixture[str]):
+    first = "| id | change |\n|---|---|\n| CHG-1 | revoke |\n"
+    second = "| agent | class |\n|--|--|\n| a-1 | outbound |\n"
+    (files / "changes.md").write_text(f"# Changes\n\n{first}\nText.\n\n{second}")
+    frame = table(str(files / "changes.md"))
+    assert frame.loc[frame["id"] != "", ["id", "change"]].values.tolist() == [["CHG-1", "revoke"]]
+    assert frame["_source"].tolist() == [WsSource(path=str(files / "changes.md"), line=n) for n in (5, 11)]
+    assert frame.loc[frame["agent"] == "a-1", "class"].tolist() == ["outbound"]
+    (files / "prose.md").write_text("# Title\nno table here\n")
+    assert table(str(files / "prose.md")).empty
+    assert "table: no rows in" in capsys.readouterr().err
+
+
+def test_hints_say_what_to_do_and_stay_quiet_otherwise(files: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(ws.hints, "WORKSPACE", files)
+    frame = pd.DataFrame({"request_id": [1], "actor": ["ext"]})
+    key = error_hint(KeyError("req_id"), {"df": frame})
+    assert key is not None
+    assert "closest: request_id" in key
+    assert error_hint(PermissionError(13, "Permission denied", "/drafts/x.md"), {}) == WRITE_HINT
+    assert error_hint(PermissionError(13, "Permission denied", "/tmp/x"), {}) is None
+    created = error_hint(FileNotFoundError(2, "No such file or directory", "/no-such-folder/x.md"), {})
+    assert created is not None
+    assert created.endswith(WRITE_HINT)
+    assert error_hint(ValueError("x"), {}) is None
+    assert error_hint(KeyError(3), {"df": frame}) is None
+    assert code_tip("import subprocess\nsubprocess.run(['grep', '-r', 'x', '/'])") == GREP_TIP
+    assert code_tip("hits = grep('x')") is None
+
+
+def test_tz_localize_on_aware_values_converts(monkeypatch: pytest.MonkeyPatch):
+    from pandas import DatetimeIndex
+    from pandas.core.indexes.accessors import DatetimeProperties
+
+    monkeypatch.setattr(DatetimeProperties, "tz_localize", DatetimeProperties.tz_localize)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType] - stub gap
+    monkeypatch.setattr(DatetimeIndex, "tz_localize", DatetimeIndex.tz_localize)
+    ws.tables.lenient_pandas()
+    aware = pd.Series(pd.to_datetime(["2026-11-14T03:00:00+01:00"]))
+    assert aware.dt.tz_localize("UTC").dt.strftime("%H:%M").tolist() == ["02:00"]
+    naive = pd.Series(pd.to_datetime(["2026-11-14T03:00:00"]))
+    assert naive.dt.tz_localize("Europe/Berlin").dt.tz_convert("UTC").dt.strftime("%H:%M").tolist() == ["02:00"]

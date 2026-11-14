@@ -384,3 +384,16 @@ def test_passes_pandas_readers_cite_and_view_image_says_it_is_a_tool(box: TaskSa
     image = box.run(rec, "view_image('/x.png')")
     assert "view_image is a tool, not a Python function" in image.stderr.text
     assert run_ok(box, rec, "import os; grep('R-1'); print(os.listdir('/tmp'))") == "[]"  # no parse cache in /tmp
+
+
+def test_passes_hints_after_errors_and_a_tip_before_a_shell_grep(box: TaskSandbox, rec: Recorder):
+    written = box.run(rec, "open('/drafts/summary.md', 'w').write('x')")
+    assert 'put {"tool": "write"' in written.stderr.text
+    run_ok(box, rec, "df = table('/logs/access/requests.csv')")
+    missing = box.run(rec, "df['actr']")
+    assert "closest: actor" in missing.stderr.text
+    path = box.run(rec, "open('/logs/access/request.csv')")
+    assert "/logs/access/requests.csv" in path.stderr.text
+    shell = box.run(rec, "print(sh('grep -c R- /logs/access/requests.csv').stdout.strip())")
+    assert shell.stdout.text == "2\n"
+    assert "tip: grep(pattern" in shell.stderr.text
