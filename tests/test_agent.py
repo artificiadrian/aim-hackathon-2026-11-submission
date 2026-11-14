@@ -188,3 +188,8 @@ def test_nested_source_lists_are_flattened():
     )
     args = parse_submit(nested)
     assert [(s.path, s.line, s.record) for s in args.sources] == [("/a.md", 2, None), ("/b.csv", None, "R")]
+
+
+def test_the_first_message_carries_the_table_columns():
+    message = first_message("List the ids.", {}, {}, {"/a.csv": 10}, "/a.csv line=1| id | actor")
+    assert message.endswith("table file and sheet) =====\n/a.csv line=1| id | actor")

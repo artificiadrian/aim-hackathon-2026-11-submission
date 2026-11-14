@@ -185,9 +185,11 @@ def loop(rec: Recorder, tools: Tools, task: Task, deadline: Deadline) -> Solutio
         rules=files.rules,
         records=files.records,
     )
+    overview = tools.box.run(rec, "print(columns())", timeout=60.0)  # table headers: no column guessing
+    tables = overview.stdout.text.strip() if overview.exit_code == 0 else ""
     messages: list[Message] = [
         SystemMessage(content=SYSTEM),
-        UserMessage(content=first_message(task.instruction, files.trusted, files.history, files.sizes)),
+        UserMessage(content=first_message(task.instruction, files.trusted, files.history, files.sizes, tables)),
     ]
     locators_asked = False
     rejected_before = False
@@ -216,7 +218,8 @@ def loop(rec: Recorder, tools: Tools, task: Task, deadline: Deadline) -> Solutio
         for call in message.tool_calls:
             run = tools.call(rec, call)
             if run.submitted is None:
-                messages.append(ToolMessage(tool_call_id=call.id, content=run.output))
+                content = f"[step {step} of {MAX_STEPS}] {run.output}"  # so the model plans to finish in time
+                messages.append(ToolMessage(tool_call_id=call.id, content=content))
                 continue
             match check_submit(run.submitted, last, locators_asked, rejected_before):
                 case Accepted(args=args):

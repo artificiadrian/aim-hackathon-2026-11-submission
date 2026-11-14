@@ -61,6 +61,40 @@ def files_under(root: Path):
     return sorted(p for p in found if not (top and p.parts[1] in SKIPPED))
 
 
+TABLES = (".csv", ".jsonl", ".xlsx", ".xlsm", ".ods")
+COLUMNS_MAX = 240  # characters per header line
+
+
+def header(found: list[Unit]):
+    """The header of a table: the first unit with two or more filled cells (title rows have one), per sheet."""
+    seen: dict[str | None, str] = {}
+    for unit in found:
+        sheet = unit.source.sheet
+        if sheet in seen:
+            continue
+        if len([c for c in unit.cells if c.strip()]) >= 2:
+            seen[sheet] = f"{unit.source.where}| " + " | ".join(c.strip() for c in unit.cells)
+        elif unit.text.lstrip().startswith("{"):  # jsonl: the keys of the first object
+            keys = re.findall(r'"([^"]+)"\s*:', unit.text)
+            seen[sheet] = f"{unit.source.where}| keys: " + ", ".join(dict.fromkeys(keys))
+    return [line[:COLUMNS_MAX] for line in seen.values()]
+
+
+def columns(*paths: str):
+    """The header of every table file (csv, jsonl, xlsx, ods) in the given files and folders (default: all), one line
+    per file and sheet, e.g. ``/a.xlsx sheet=alerts row=3| id | token | status``."""
+    lines: list[str] = []
+    for file in dict.fromkeys(f for path in paths or ("/",) for f in files_under(Path(path))):
+        if file.suffix.lower() not in TABLES:
+            continue
+        try:
+            found = units(str(file))[:50]
+        except Exception:  # noqa: S112 - an unreadable file is left out of the overview
+            continue
+        lines += [f"{file} {line}" for line in header(found)]
+    return "\n".join(lines)
+
+
 def grep(pattern: str, *paths: str, regex: bool = False, limit: int = 100):
     """Every unit that matches ``pattern`` (any case) in the given files and folders (default: the whole workspace),
     any format: a list of ``Hit`` (``hit.source`` goes into submit(...)), at most ``limit``."""

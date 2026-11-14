@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 import ws.formats
-from ws.files import cite, grep
+from ws.files import cite, columns, grep
 from ws.models import Source as WsSource
 
 from mcnulty.clients.arena import Source
@@ -44,3 +44,10 @@ def test_cite_with_a_column_a_file_does_not_have_still_cites(files: Path, capsys
     assert [s.line for s in found] == [2]
     assert "no column 'ts'" in capsys.readouterr().err
     assert [s.record for s in cite(str(files / "r.csv"), "int", column="actor")] == ["RQ-2"]
+
+
+def test_columns_lists_the_header_of_every_table(files: Path):
+    lines = columns(str(files)).splitlines()
+    assert f"{files / 'r.csv'} line=1| request_id | actor" in lines
+    assert f"{files / 'a.jsonl'} line=1| keys: a" in lines
+    assert all("n.md" not in line for line in lines)

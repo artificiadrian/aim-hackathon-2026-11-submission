@@ -7,12 +7,12 @@ lines match the code) in a namespace that holds the helpers, so no script needs 
 import logging
 import sys
 
-from ws.files import cite, grep, text
+from ws.files import cite, columns, grep, text
 from ws.network import block_network
 from ws.shell import sh
 from ws.submit import submit
 
-HELPERS = {helper.__name__: helper for helper in (submit, text, cite, grep, sh)}
+HELPERS = {helper.__name__: helper for helper in (submit, text, cite, grep, columns, sh)}
 
 
 def main():
