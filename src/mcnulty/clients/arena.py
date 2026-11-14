@@ -8,11 +8,12 @@ import time
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar, Literal
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, PrivateAttr
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from mcnulty.blobs import BlobCache, BlobMismatch
 from mcnulty.clients.http import header, retry_after
@@ -171,18 +172,17 @@ class PlatformUnreachable(ArenaError):
 
 
 # --- client -------------------------------------------------------------------------------------------
-class ArenaClient(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, arbitrary_types_allowed=True)
-
+@dataclass(frozen=True, slots=True)
+class ArenaClient:
     http: httpx.Client
     cache: BlobCache
-    _locks: dict[str, threading.Lock] = PrivateAttr(default_factory=dict[str, threading.Lock])
-    _locks_guard: threading.Lock = PrivateAttr(default_factory=threading.Lock)
+    locks: dict[str, threading.Lock] = field(default_factory=dict[str, threading.Lock], repr=False)
+    locks_guard: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def lock_for(self, sha256: str):
         """One lock per blob: parallel tasks that need the same large file download it once."""
-        with self._locks_guard:
-            return self._locks.setdefault(sha256, threading.Lock())
+        with self.locks_guard:
+            return self.locks.setdefault(sha256, threading.Lock())
 
     @classmethod
     def connect(cls, settings: Settings):

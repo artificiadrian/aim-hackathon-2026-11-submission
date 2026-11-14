@@ -6,10 +6,11 @@ logged to a Recorder.
 
 import threading
 import time
+from dataclasses import dataclass, field, replace
 from typing import Annotated, ClassVar, Literal
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, PrivateAttr, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
 
 from mcnulty.clients.http import header, retry_after
 from mcnulty.frozen import Frozen
@@ -217,7 +218,8 @@ class JevResponse(Reply):
 
 
 # --- cost ---------------------------------------------------------------------------------------------
-class CostTracker(BaseModel):
+@dataclass(slots=True)
+class CostTracker:
     """Thread-safe tally of model spend, with an optional hard cap in USD. A child (one task) adds to its parent too,
     and the parent's cap stops it."""
 
@@ -227,11 +229,11 @@ class CostTracker(BaseModel):
     calls: int = 0
     prompt_tokens: int = 0
     completion_tokens: int = 0
-    by_model: dict[str, float] = Field(default_factory=dict)
-    _lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
+    by_model: dict[str, float] = field(default_factory=dict[str, float])
+    lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def add(self, model: str, usage: Usage):
-        with self._lock:
+        with self.lock:
             self.total += usage.cost
             self.calls += 1
             self.prompt_tokens += usage.prompt_tokens
@@ -249,9 +251,8 @@ class CostTracker(BaseModel):
 
 
 # --- client -------------------------------------------------------------------------------------------
-class OpenRouterClient(BaseModel):
-    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, arbitrary_types_allowed=True)
-
+@dataclass(frozen=True, slots=True)
+class OpenRouterClient:
     http: httpx.Client
     base_url: str
     tracker: CostTracker
@@ -269,7 +270,7 @@ class OpenRouterClient(BaseModel):
 
     def for_task(self):
         """The same client with its own tracker for one task (spend per task), under this client's cap."""
-        return self.model_copy(update={"tracker": self.tracker.child()})
+        return replace(self, tracker=self.tracker.child())
 
     @property
     def jev_url(self):

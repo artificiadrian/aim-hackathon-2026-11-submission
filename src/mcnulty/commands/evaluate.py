@@ -11,6 +11,7 @@ from pathlib import Path
 from pydantic import Field
 
 from mcnulty.agent.loop import solve
+from mcnulty.agent.sandbox import SandboxPool
 from mcnulty.agent.submit import FALLBACK
 from mcnulty.blobs import BlobCache
 from mcnulty.clients.arena import MAX_NOTE, Run, RunManifest, RunStatus, git_meta
@@ -67,13 +68,15 @@ class EvalSummary(Frozen):
 def run_eval(rec: Recorder, llm: OpenRouterClient, blobs: BlobCache, saved: SavedRun, task_ids: tuple[str, ...]):
     """Solve and grade ``task_ids`` of ``saved``; one stdout line per task. Model spend stops at the tracker's cap."""
 
+    pool = SandboxPool()
+
     def work(task_id: str):
         task = next(t for t in saved.run.tasks if t.task_id == task_id)
         task_rec = rec.for_task(task_id)
         task_llm = llm.for_task()
         t0 = time.time()
         try:
-            solution = solve(task_rec, task_llm, task, saved.files(task_id), blobs)
+            solution = solve(task_rec, task_llm, task, saved.files(task_id), blobs, pool)
         except BudgetExhausted:
             solution = FALLBACK
         except Exception as e:  # one task must never stop the evaluation

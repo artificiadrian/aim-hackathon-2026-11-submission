@@ -2,9 +2,8 @@
 
 import hashlib
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
-
-from mcnulty.frozen import Frozen
 
 
 class BlobMismatch(ValueError):
@@ -12,7 +11,8 @@ class BlobMismatch(ValueError):
         super().__init__(f"blob {sha256[:12]} does not match its sha256")
 
 
-class BlobCache(Frozen):
+@dataclass(frozen=True, slots=True)
+class BlobCache:
     """Content-addressed files: ``<root>/<sha256>``. A blob never goes stale, so runs and tasks share it."""
 
     root: Path

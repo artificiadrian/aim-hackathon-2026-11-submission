@@ -9,12 +9,12 @@ import hashlib
 import re
 import threading
 import time
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import override
 
-from pydantic import BaseModel, PrivateAttr, ValidationError
+from pydantic import ValidationError
 
-from mcnulty.frozen import JSON, Frozen
+from mcnulty.frozen import JSON
 from mcnulty.record.events import BlobRef, Envelope, Event, JsonBody, TextBody
 
 INLINE_MAX = 64_000  # bytes
@@ -22,17 +22,17 @@ SECRET_PATTERN = re.compile(r"(arena_[A-Za-z0-9_-]{8,}|sk-or-[A-Za-z0-9-]{16,}|B
 
 
 # --- recorder -----------------------------------------------------------------------------------------
-class EventLog(BaseModel):
+@dataclass(slots=True)
+class EventLog:
     """The files of one run. Shared by every Recorder of the run; thread-safe."""
 
     run_dir: Path
     secrets: tuple[str, ...] = ()
-    _lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
-    _seq: int = PrivateAttr(default=0)
-    _t0: float = PrivateAttr(default_factory=time.time)
+    lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+    seq: int = field(default=0, init=False)
+    t0: float = field(default_factory=time.time, init=False)
 
-    @override
-    def model_post_init(self, context: object):
+    def __post_init__(self):
         (self.run_dir / "blobs").mkdir(parents=True, exist_ok=True)
 
     def redact(self, text: str):
@@ -42,11 +42,11 @@ class EventLog(BaseModel):
         return SECRET_PATTERN.sub("[REDACTED]", text)
 
     def write(self, task_id: str | None, event: Event):
-        with self._lock:
-            self._seq += 1
+        with self.lock:
+            self.seq += 1
             envelope = Envelope(
-                seq=self._seq,
-                t=round(time.time() - self._t0, 3),
+                seq=self.seq,
+                t=round(time.time() - self.t0, 3),
                 task_id=task_id,
                 event=event,
             )
@@ -61,12 +61,13 @@ class EventLog(BaseModel):
         return BlobRef(sha256=sha, size=len(raw))
 
 
-class Recorder(Frozen):
+@dataclass(frozen=True, slots=True)
+class Recorder:
     events: EventLog
     task_id: str | None = None
 
     def for_task(self, task_id: str):
-        return self.model_copy(update={"task_id": task_id})
+        return replace(self, task_id=task_id)
 
     def log(self, event: Event):
         self.events.write(self.task_id, event)

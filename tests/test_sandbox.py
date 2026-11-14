@@ -6,15 +6,18 @@ Runs only inside the Docker image (AGENTS.md, Commands); skipped elsewhere.
 
 import hashlib
 import os
+import threading
+import time
 from pathlib import Path
 
 import pytest
 
-from mcnulty.agent.sandbox import FSIZE, RECORD_MAX, SITECUSTOMIZE, TaskSandbox, self_test
+from mcnulty.agent.sandbox import FSIZE, RECORD_MAX, SITECUSTOMIZE, SandboxPool, TaskSandbox, self_test
 from mcnulty.blobs import BlobCache
 from mcnulty.record.log import EventLog, Recorder
 
 pytestmark = pytest.mark.skipif(not SITECUSTOMIZE.exists(), reason="the sandbox runs only inside the Docker image")
+POOL = SandboxPool()
 CSV = b"id,actor,records\nR-1,ext,5\nR-2,int,7\n"
 
 
@@ -25,7 +28,9 @@ def box(tmp_path: Path):
     for data in files.values():
         blobs.put(hashlib.sha256(data).hexdigest(), data)
     rec = Recorder(events=EventLog(run_dir=tmp_path / "setup"))
-    sandbox = TaskSandbox.create(rec, "t-test", {p: hashlib.sha256(d).hexdigest() for p, d in files.items()}, blobs)
+    sandbox = TaskSandbox.create(
+        rec, POOL, "t-test", {p: hashlib.sha256(d).hexdigest() for p, d in files.items()}, blobs
+    )
     yield sandbox
     sandbox.remove()
 
@@ -85,7 +90,8 @@ def test_catches_no_keys_no_host_files_and_second_user(
     paths = "'/app', '/proc/1', '/usr/local/bin/uv', '/sandbox'"
     code = f"import os; print(os.getuid(), sorted(os.environ), [os.path.exists(p) for p in ({paths})])"
     out = run_ok(box, rec, code)
-    assert out.startswith("10001 ")
+    assert out.split()[0].isdigit()
+    assert int(out.split()[0]) >= 10001
     assert "OPENROUTER" not in out
     assert out.endswith("[False, False, False, False]")
     assert os.environ["OPENROUTER_API_KEY"] == "sk-or-must-not-leak"
@@ -124,7 +130,7 @@ def test_catches_workspace_paths_that_leave_the_task_root(tmp_path: Path):
     blobs.put(sha, data)
     paths = ("/../../escaped-1.txt", "/logs/../../../escaped-2.txt", "/ok/../inside.txt")
     rec = Recorder(events=EventLog(run_dir=tmp_path / "run"))
-    sandbox = TaskSandbox.create(rec, "t-escape", dict.fromkeys(paths, sha), blobs)
+    sandbox = TaskSandbox.create(rec, POOL, "t-escape", dict.fromkeys(paths, sha), blobs)
     try:
         assert not Path("/sandbox/escaped-1.txt").exists()
         assert not Path("/sandbox/tasks/escaped-2.txt").exists()
@@ -168,4 +174,46 @@ def test_catches_a_detached_child(box: TaskSandbox, rec: Recorder):
 
 
 def test_passes_the_self_test(rec: Recorder):
-    assert self_test(rec).startswith("sandbox ok ")
+    assert self_test(rec, POOL).startswith("sandbox ok ")
+
+
+def test_catches_one_task_signalling_another(box: TaskSandbox, rec: Recorder, tmp_path: Path):
+    """One uid per task (review SB4): kill(-1) reaches only the task's own processes."""
+    other = TaskSandbox.create(rec, POOL, "t-other", {}, BlobCache(root=tmp_path / "none"))
+    try:
+        assert other.uid != box.uid
+        result: list[str] = []
+
+        def sleep_then_print():
+            result.append(other.run(rec, "import time; time.sleep(3); print('alive')").stdout.text)
+
+        sleeper = threading.Thread(target=sleep_then_print)
+        sleeper.start()
+        time.sleep(1)
+        box.run(rec, "import os, signal; os.kill(-1, signal.SIGKILL)")
+        sleeper.join()
+        assert result == ["alive\n"]
+    finally:
+        other.remove()
+
+
+def test_catches_a_full_tmp(box: TaskSandbox, rec: Recorder):
+    code = "for i in range(17): open(f'/tmp/f{i}', 'wb').write(b'0' * (16 * 1024 * 1024 - 1))"
+    assert box.run(rec, code).tmp_cleared
+    assert run_ok(box, rec, "import os; print(os.listdir('/tmp'))") == "[]"
+
+
+def test_passes_a_script_that_waits_for_a_slot_says_so(rec: Recorder, tmp_path: Path):
+    pool = SandboxPool(slots=threading.BoundedSemaphore(1))
+    sandbox = TaskSandbox.create(rec, pool, "t-slots", {}, BlobCache(root=tmp_path / "none"))
+    try:
+        pool.slots.acquire()
+        assert not sandbox.run(rec, "print(1)", wait=0.2).started
+        pool.slots.release()
+        assert sandbox.run(rec, "print(1)").stdout.text == "1\n"
+    finally:
+        sandbox.remove()
+
+
+def test_passes_workspace_files_hard_linked_from_the_cache(box: TaskSandbox):
+    assert (box.root / "AGENTS.md").stat().st_nlink >= 2

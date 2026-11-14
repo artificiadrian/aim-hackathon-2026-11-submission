@@ -118,6 +118,8 @@ def first_message(instruction: str, trusted: dict[str, str], history: dict[str, 
 def status(run: SandboxRan):
     """The first line of a script's output, in words: how it ended."""
     seconds = f"{run.seconds:.1f}s"
+    if not run.started:
+        return f"[script did not start: other tasks' scripts used every slot for {seconds}; run it again]"
     if run.timed_out:
         return f"[script timed out after {seconds} and was stopped; make it faster or split it]"
     if run.exit_code is not None and run.exit_code < 0:
@@ -125,6 +127,7 @@ def status(run: SandboxRan):
         return f"[script killed by {name} ({SIGNAL_HINTS.get(name, 'a signal')}), {seconds}]"
     verb = "finished" if run.exit_code == 0 else "failed"
     capped = "; stdout stopped at the file size limit" if run.stdout.capped else ""
+    capped += "; /tmp was over its size limit and was emptied" if run.tmp_cleared else ""
     return f"[script {verb}, exit code {run.exit_code}, {seconds}{capped}]"
 
 

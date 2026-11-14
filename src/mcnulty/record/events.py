@@ -240,6 +240,8 @@ class SandboxRan(Frozen):
     exit_code: int | None  # None when the run timed out; negative: killed by that signal
     seconds: float
     timed_out: bool
+    started: bool = True  # False: no script slot came free in time; nothing ran
+    tmp_cleared: bool = False  # /tmp was over its cap after the run and was emptied
 
 
 class CheckResult(Frozen):

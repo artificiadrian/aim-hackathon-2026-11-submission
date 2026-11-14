@@ -10,6 +10,7 @@ import base64
 import math
 import re
 import time
+from dataclasses import dataclass
 
 from pydantic import ValidationError
 
@@ -27,7 +28,7 @@ from mcnulty.agent.prompt import (
     script_output,
     shorten_old_outputs,
 )
-from mcnulty.agent.sandbox import TaskSandbox
+from mcnulty.agent.sandbox import SandboxPool, TaskSandbox
 from mcnulty.agent.submit import (
     FALLBACK,
     RUN_PYTHON,
@@ -117,7 +118,8 @@ class TaskFiles(Frozen):
         return "\n".join(t for p, t in self.trusted.items() if p not in OPERATOR_FILES)
 
 
-class Tools(Frozen):
+@dataclass(frozen=True, slots=True)
+class Tools:
     """What the model's tools act on."""
 
     llm: OpenRouterClient
@@ -179,10 +181,11 @@ def solve(
     task: Task,
     files: dict[str, str],
     blobs: BlobCache,
+    pool: SandboxPool,
     deadline: Deadline = NO_DEADLINE,
 ):
     task_files = TaskFiles.load(files, blobs)
-    box = TaskSandbox.create(rec, task.task_id, files, blobs)
+    box = TaskSandbox.create(rec, pool, task.task_id, files, blobs)
     try:
         result = loop(rec, Tools(llm=llm, box=box, files=task_files, blobs=blobs), task, deadline)
     finally:

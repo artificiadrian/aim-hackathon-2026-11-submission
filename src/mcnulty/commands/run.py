@@ -10,15 +10,15 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import ClassVar
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
+from pydantic import Field
 
 from mcnulty.agent.actions import tool_args
 from mcnulty.agent.loop import Deadline, solve
-from mcnulty.agent.sandbox import self_test
+from mcnulty.agent.sandbox import SandboxPool, self_test
 from mcnulty.agent.submit import FALLBACK, Solution
 from mcnulty.clients.arena import (
     MAX_NOTE,
@@ -60,25 +60,24 @@ def run_deadline(started: float, run: Run):
     return Deadline(end=end - DEADLINE_MARGIN)
 
 
-class Submitter(BaseModel):
+@dataclass(frozen=True, slots=True)
+class Submitter:
     """Submits each task once: the worker that solved it, or the deadline rescue, whichever comes first."""
-
-    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     arena: ArenaClient
     run_id: str
-    _claimed: set[str] = PrivateAttr(default_factory=set[str])
-    lock: threading.Lock = Field(default_factory=threading.Lock)
+    claimed: set[str] = field(default_factory=set[str])
+    lock: threading.Lock = field(default_factory=threading.Lock)
 
     def open(self, task_id: str):
         with self.lock:
-            return task_id not in self._claimed
+            return task_id not in self.claimed
 
     def claim(self, task_id: str):
         with self.lock:
-            if task_id in self._claimed:
+            if task_id in self.claimed:
                 return False
-            self._claimed.add(task_id)
+            self.claimed.add(task_id)
             return True
 
     def send(self, task_rec: Recorder, task_id: str, submission: Submission):
@@ -109,6 +108,7 @@ def run_tasks(settings: Settings, args: RunArgs, started: float):
         print(f"error: {e}", file=sys.stderr)
         return 1
     deadline = run_deadline(started, run)
+    pool = SandboxPool()
     (run_dir / "run.json").write_text(run.model_dump_json(indent=1), encoding="utf-8")
     (run_dir / "tools.json").write_text("[" + ",".join(t.model_dump_json() for t in tools) + "]", encoding="utf-8")
 
@@ -132,7 +132,7 @@ def run_tasks(settings: Settings, args: RunArgs, started: float):
         stats = arena.prefetch(rec, manifest, run.run_id)
         print(f"collect: {sum(x.files for x in stats)} files, {sum(x.failed for x in stats)} failed")
     else:
-        print(self_test(rec))
+        print(self_test(rec, pool))
 
     submitter = Submitter(arena=arena, run_id=run.run_id)
     finished = threading.Event()
@@ -166,7 +166,7 @@ def run_tasks(settings: Settings, args: RunArgs, started: float):
         files = manifest_files.get(task.task_id, {})
         try:
             arena.fetch_task(task_rec, run.run_id, task.task_id, files)
-            return solve(task_rec, llm.for_task(), task, files, arena.cache, deadline)
+            return solve(task_rec, llm.for_task(), task, files, arena.cache, pool, deadline)
         except BudgetExhausted:
             return FALLBACK
         except Exception as e:
