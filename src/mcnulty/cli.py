@@ -19,6 +19,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from mcnulty.actions import tool_args
 from mcnulty.arena import MAX_NOTE, ArenaClient, ArenaError, BlobCache, RunKind, Task, git_meta
 from mcnulty.eval import SavedRun, run_eval
 from mcnulty.live_check import live_check
@@ -149,12 +150,20 @@ def run_tasks(settings: Settings, args: RunArgs):
         task_rec = rec.for_task(task.task_id)
         t0 = time.time()
         try:
-            submission = solve(task_rec, llm, task, manifest_files[task.task_id], arena.cache)
+            solution = solve(task_rec, llm, task, manifest_files[task.task_id], arena.cache)
         except BudgetExhausted:
-            submission = FALLBACK
+            solution = FALLBACK
         except Exception as e:  # one task must never kill the run; always submit something
             task_rec.log(TaskCrashed.from_exception(e))
-            submission = FALLBACK
+            solution = FALLBACK
+        submission = solution.submission
+        for vetted in solution.actions:
+            if vetted.blocked:
+                continue
+            try:
+                arena.call_tool(task_rec, run.run_id, task.task_id, vetted.action.tool, tool_args(vetted.action))
+            except ArenaError as e:
+                task_rec.log(TaskCrashed.from_exception(e))
         try:
             result = arena.submit(task_rec, run.run_id, task.task_id, submission)
             score, feedback = result.score, result.feedback

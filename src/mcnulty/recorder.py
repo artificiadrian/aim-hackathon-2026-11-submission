@@ -167,6 +167,14 @@ class TaskFinished(Frozen):
     feedback: tuple[str, ...]
 
 
+class TaskSolved(Frozen):
+    """What the solver returns: the submission, the checked actions with their findings, the steps used.
+    (``mcnulty.solver.Solution`` as JSON: the recorder sits below the modules that define it.)"""
+
+    kind: Literal["task_solved"] = "task_solved"
+    solution: JsonValue
+
+
 class TaskScored(Frozen):
     """Offline grade of one task against the revealed answers of a saved dev run (``src/mcnulty/eval.py``)."""
 
@@ -225,6 +233,7 @@ Event = Annotated[
     | LlmFailed
     | TaskCrashed
     | TaskFinished
+    | TaskSolved
     | TaskScored
     | RunFinished
     | FileSkipped

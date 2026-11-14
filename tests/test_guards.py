@@ -5,8 +5,6 @@ either side. Data tests use the collected dev runs as ground truth and skip with
 Naming: ``test_<guard>_passes_<case>`` and ``test_<guard>_catches_<case>``.
 """
 
-import csv
-import io
 import json
 import re
 import sys
@@ -15,6 +13,7 @@ from typing import get_args
 
 import pytest
 
+from mcnulty.actions import verified_contacts
 from mcnulty.arena import BlobCache
 from mcnulty.guards import FindingKind, defang_urls, outgoing_findings, unverified_recipient
 from mcnulty.settings import REPO_ROOT
@@ -54,15 +53,7 @@ def operator_rules(files: dict[str, str]):
 
 
 def verified_addresses(files: dict[str, str]):
-    rows = list(csv.reader(io.StringIO(text(files["/contacts.csv"]))))
-    header = [h.lower() for h in rows[0]]
-    verified_col = next(i for i, h in enumerate(header) if "verified" in h)
-    return frozenset(
-        address
-        for row in rows[1:]
-        if row[verified_col].strip().lower() in {"yes", "true", "1"}
-        for address in ADDRESS.findall(",".join(row))
-    )
+    return verified_contacts(text(files["/contacts.csv"]))
 
 
 def expected_answers():

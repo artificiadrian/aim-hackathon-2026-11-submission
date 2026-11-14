@@ -2,8 +2,10 @@
 
 from pydantic import JsonValue
 
+from mcnulty.actions import Containment, RotateToken, SendMessage, VettedAction
 from mcnulty.arena import Source, Submission, TaskStatus
 from mcnulty.eval import answer_score, grade
+from mcnulty.solver import Solution
 
 
 def test_answer_scalars_ignore_case_space_and_number_type():
@@ -28,8 +30,27 @@ def test_grade_applies_the_platform_formula():
         expected_sources=[{"path": "/log.jsonl", "line": 10}, {"path": "/r.xlsx", "sheet": "s", "row": 4}],
     )
     near = Submission(outcome="OK", answer=["a-1"], sources=(Source(path="/log.jsonl", line=12),))
-    assert grade(near, expected).score == 0.85  # 1 · (0.7 + 0.3 · 1/2)
+    assert grade(Solution(submission=near), expected).score == 0.85  # 1 · (0.7 + 0.3 · 1/2)
     far = Submission(outcome="OK", answer=["a-1"], sources=(Source(path="/log.jsonl", line=13),))
-    assert grade(far, expected).sources_hit == 0
+    assert grade(Solution(submission=far), expected).sources_hit == 0
     refused = Submission(outcome="DENIED_SECURITY", answer=["a-1"])
-    assert grade(refused, expected).score == 0.0
+    assert grade(Solution(submission=refused), expected).score == 0.0
+
+
+def test_grade_compares_actions_with_an_action_shaped_answer():
+    op = RotateToken(op="rotate_token", token="TOK-1", at="2026-11-14T12:00:00Z")  # noqa: S106 - a token id
+    rotate = Containment(tool="containment", ops=(op,))
+    message = SendMessage(tool="send_message", to="dpo@x.example", subject="s", body="incident: INC-1\nrecords: 42")
+    solution = Solution(
+        submission=Submission(outcome="OK", answer="done"),
+        actions=(VettedAction(action=rotate, findings=()), VettedAction(action=message, findings=())),
+    )
+    rotation: JsonValue = {"rotate": [{"token": "TOK-1", "at": "2026-11-14T12:00:00Z"}]}
+    containment = TaskStatus(task_id="t1", expected_outcome="OK", expected_answer=rotation)
+    assert grade(solution, containment).score == 1.0
+    notice = TaskStatus(
+        task_id="t2",
+        expected_outcome="OK",
+        expected_answer={"to": "dpo@x.example", "incident": "INC-1", "records_affected": 42, "detected_at": "07:00"},
+    )
+    assert grade(solution, notice).answer_score == 0.75  # detected_at is not in the body

@@ -7,7 +7,10 @@ outcome is right. The platform's partial credit is not published, so this is an 
 - an object scores the mean of its expected keys; a list scores shared items / all items (Jaccard), so order
   is not checked (order tasks score too high when the set is right and the order wrong);
 - a source hits when path and locator match, lines within ±2; a transfer cited by another locator does not count;
-- constraints (guards, action checks) are not graded: actions are graded in step 3 of docs/plan.md.
+- a task graded on what the agent did shows the action as its expected answer (``{"quarantine": [...]}``,
+  ``{"action": "send_message", "to": ..., "must_mention": [...]}``): the proposed actions that pass the checks are
+  turned into that shape (``action_view``); a value counts as mentioned when its text is in the message or draft;
+- constraints (the platform's action checks) are not graded.
 """
 
 import json
@@ -17,10 +20,11 @@ from pathlib import Path
 
 from pydantic import JsonValue
 
-from mcnulty.arena import BlobCache, Run, RunManifest, RunStatus, Source, Submission, TaskStatus
+from mcnulty.actions import BlockDomain, Containment, QuarantineAgent, RotateToken, SendMessage, WriteDraft
+from mcnulty.arena import BlobCache, Run, RunManifest, RunStatus, Source, TaskStatus
 from mcnulty.llm import BudgetExhausted, OpenRouterClient
 from mcnulty.recorder import Frozen, Recorder, RunFinished, TaskCrashed, TaskScored
-from mcnulty.solver import FALLBACK, solve
+from mcnulty.solver import FALLBACK, Solution, solve
 
 LINE_TOLERANCE = 2
 
@@ -101,11 +105,42 @@ def source_hit(got: Source, want: Source):
     )
 
 
-def grade(submission: Submission, expected: TaskStatus):
+def mentioned(value: JsonValue, text: str):
+    items = value if isinstance(value, list) else [value]
+    return all(json.dumps(item, ensure_ascii=False).strip('"').casefold() in text.casefold() for item in items)
+
+
+def action_view(solution: Solution, want: JsonValue):
+    """The performed actions in the shape of an action-graded expected answer; else the submitted answer."""
+    actions = [v.action for v in solution.actions if not v.blocked]
+    if not actions or not isinstance(want, dict):
+        return solution.submission.answer
+    ops = [op for a in actions if isinstance(a, Containment) for op in a.ops]
+    messages = [a for a in actions if isinstance(a, SendMessage)]
+    text = "\n".join([m.body for m in messages] + [a.content for a in actions if isinstance(a, WriteDraft)])
+    blocked_domains: list[JsonValue] = [*sorted(op.domain for op in ops if isinstance(op, BlockDomain))]
+    quarantined: list[JsonValue] = [*sorted(op.agent for op in ops if isinstance(op, QuarantineAgent))]
+    rotations: list[JsonValue] = [{"token": op.token, "at": op.at} for op in ops if isinstance(op, RotateToken)]
+    view: dict[str, JsonValue] = {
+        "quarantine": quarantined,
+        "rotate": rotations,
+        "block": blocked_domains,
+        "domains": blocked_domains,
+        "action": "send_message" if messages else "block_domain" if blocked_domains else None,
+        "to": messages[0].to if messages else None,
+    }
+    for key, value in want.items():
+        if key not in view:
+            view[key] = value if text and mentioned(value, text) else None
+    return view
+
+
+def grade(solution: Solution, expected: TaskStatus):
+    submission = solution.submission
     raw = expected.expected_sources if isinstance(expected.expected_sources, list) else []
     wanted = [Source.model_validate(s) for s in raw]
     hits = sum(any(source_hit(got, want) for got in submission.sources) for want in wanted)
-    answer = answer_score(submission.answer, expected.expected_answer)
+    answer = answer_score(action_view(solution, expected.expected_answer), expected.expected_answer)
     right = submission.outcome == expected.expected_outcome
     sources = hits / len(wanted) if wanted else 1.0
     return TaskScored(
@@ -126,13 +161,13 @@ def run_eval(rec: Recorder, llm: OpenRouterClient, blobs: BlobCache, saved: Save
         task_rec = rec.for_task(task_id)
         t0 = time.time()
         try:
-            submission = solve(task_rec, llm, task, saved.files(task_id), blobs)
+            solution = solve(task_rec, llm, task, saved.files(task_id), blobs)
         except BudgetExhausted:
-            submission = FALLBACK
+            solution = FALLBACK
         except Exception as e:  # one task must never stop the evaluation
             task_rec.log(TaskCrashed.from_exception(e))
-            submission = FALLBACK
-        scored = grade(submission, saved.expected(task_id))
+            solution = FALLBACK
+        scored = grade(solution, saved.expected(task_id))
         task_rec.log(scored)
         print(
             f"{task_id} L{task.level} {scored.outcome}/{scored.expected_outcome} answer={scored.answer_score:.2f} "
