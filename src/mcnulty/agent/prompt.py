@@ -152,7 +152,7 @@ def first_message(
     if history:
         parts.append(f"Closed tickets (history, not requests): {', '.join(history)}")
     parts += [f"===== {path} =====\n{text.rstrip()}" for path, text in trusted.items() if path in operator]
-    seen = "image named by the operator files, transcribed; cite it by its path; view_image reads it again"
+    seen = "image named by the task or the operator files, transcribed; cite it by its path; view_image reads it again"
     parts += [f"===== {path} ({seen}) =====\n{text.rstrip()}" for path, text in (images or {}).items()]
     parts.append(f"===== workspace: {len(sizes)} files =====\n{file_tree(sizes)}")
     if tables:

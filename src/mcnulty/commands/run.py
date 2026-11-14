@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, ValidationError
 
 from mcnulty.agent.actions import tool_args
 from mcnulty.agent.loop import Deadline, Transcripts, solve
@@ -113,12 +113,15 @@ def run_tasks(settings: Settings, args: RunArgs, started: float):
     arena = ArenaClient.connect(settings)
     llm = OpenRouterClient.connect(settings, CostTracker(cap=args.max_usd))
     try:
-        tools = arena.tools(rec)
         meta = git_meta().model_copy(update={"note": args.note})
         run = start_or_resume(rec, arena, args, meta)
     except ArenaError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
+    try:  # only recorded: a failed tool list must not stop the run before it starts (143937Z: GET /tools 500)
+        tools = arena.tools(rec)
+    except (ArenaError, ValidationError):
+        tools = ()
     deadline = run_deadline(started, run)
     pool = SandboxPool()
     (run_dir / "run.json").write_text(run.model_dump_json(indent=1), encoding="utf-8")

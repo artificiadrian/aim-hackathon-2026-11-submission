@@ -6,8 +6,13 @@
 - Token values (``fake_…``, the platform's secret format, plus any known values) must not appear.
 - Long word sequences copied from operator rules (AGENTS.md, runbook, policies) must not appear. Short prescribed
   templates (a one-line message format) are fine, so only long copies count, and they need a judgment, not a block.
+- A message goes only to an address written in trusted text (the instruction, the operator files, the open ticket):
+  an address that only workspace data names (an inbox mail, a look-alike) is never a verified contact.
+- A domain that holds a trusted address (our own, a verified partner), or a parent or subdomain of it, is never
+  blocked.
 """
 
+import math
 import re
 from enum import StrEnum
 
@@ -31,14 +36,17 @@ URL = re.compile(
 HOST_DOT = re.compile(r"[.\u3002\uff0e\uff61]")
 TOKEN_VALUE = re.compile(r"\bfake_[A-Za-z0-9_\-]{6,}")
 WORD = re.compile(r"\w+")
+EMAIL = re.compile(r"(?<![\w.+\-])[\w.+\-]+@[\w\-]+(?:\.[\w\-]+)+")
 
 
 class FindingKind(StrEnum):
     TOKEN_VALUE = "token_value"  # noqa: S105 - a finding kind, not a secret
     RULE_TEXT = "rule_text"
+    RECIPIENT = "recipient"
+    PROTECTED_DOMAIN = "protected_domain"
 
 
-BLOCKING = frozenset({FindingKind.TOKEN_VALUE})
+BLOCKING = frozenset({FindingKind.TOKEN_VALUE, FindingKind.RECIPIENT, FindingKind.PROTECTED_DOMAIN})
 
 
 class Finding(Frozen):
@@ -77,6 +85,8 @@ def clean_answer(value: JsonValue) -> JsonValue:  # recursive
         return [clean_answer(item) for item in value]
     if isinstance(value, dict):
         return {redact_tokens(defang_urls(key)): clean_answer(item) for key, item in value.items()}
+    if isinstance(value, float) and not math.isfinite(value):
+        return None  # NaN and Infinity are not JSON: the submit would fail after the task is claimed
     return value
 
 
@@ -101,6 +111,34 @@ def rule_text(text: str, rules: tuple[str, ...]):
 def outgoing_findings(text: str, rules: tuple[str, ...], known_tokens: frozenset[str]):
     """Problems in text that leaves the harness (message body, draft, answer)."""
     return token_values(text, known_tokens) + rule_text(text, rules)
+
+
+def plain_address(text: str):
+    """An address or domain as compared: trimmed, case-folded, re-fanged (``[.]``), without ``mailto:``."""
+    return text.strip().casefold().replace("[.]", ".").removeprefix("mailto:").rstrip(".")
+
+
+def addresses(text: str):
+    """Every e-mail address written in ``text``."""
+    return frozenset(plain_address(m.group(0)) for m in EMAIL.finditer(text))
+
+
+def recipient(to: str, trusted: frozenset[str]):
+    """``trusted``: the addresses in the instruction, the operator files and the open ticket (``addresses``)."""
+    if plain_address(to) in trusted:
+        return ()
+    detail = f"{to} is not written in the instruction, the operator files or the open ticket"
+    return (Finding(kind=FindingKind.RECIPIENT, detail=detail),)
+
+
+def protected_domain(domain: str, trusted: frozenset[str]):
+    """A trusted address's domain, or a parent or subdomain of it: our own or a verified partner's."""
+    wanted = plain_address(domain).removeprefix("*.")
+    for held in sorted({a.rpartition("@")[2] for a in trusted}):
+        if wanted == held or held.endswith(f".{wanted}") or wanted.endswith(f".{held}"):
+            detail = f"{domain}: a verified contact's domain ({held}) is never blocked"
+            return (Finding(kind=FindingKind.PROTECTED_DOMAIN, detail=detail),)
+    return ()
 
 
 INVISIBLE = re.compile("[\u200b\u200e\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\U000e0000-\U000e007f]")

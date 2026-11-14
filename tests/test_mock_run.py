@@ -72,7 +72,7 @@ def test_collect_records_typed_events_without_keys(base_url: str, tmp_path: Path
     run_dir, events, raw = read_events(tmp_path)
     assert FAKE_ARENA_KEY not in raw
     paths = [e.event.path for e in events if isinstance(e.event, HttpExchange)]
-    assert paths[:2] == ["/tools", "/runs"]
+    assert paths[:2] == ["/runs", "/tools"]  # the run starts first: a failed tool list must not stop it
     assert paths[-1] == "/runs/mock/finish"
     assert not any(p.endswith("/submit") for p in paths), "collect submits nothing"
     assert {"run.json", "tools.json", "manifest.json", "finish.json"} <= {p.name for p in run_dir.iterdir()}

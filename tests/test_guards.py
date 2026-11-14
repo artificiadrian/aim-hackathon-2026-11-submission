@@ -8,6 +8,7 @@ Naming: ``test_<guard>_passes_<case>`` and ``test_<guard>_catches_<case>``.
 import json
 import re
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -16,13 +17,17 @@ from pydantic import JsonValue, ValidationError
 from mcnulty.agent.actions import Containment, Gate, WriteDraft, tool_args, vet
 from mcnulty.agent.guards import (
     FindingKind,
+    addresses,
     clean_answer,
     defang_urls,
     outgoing_findings,
+    protected_domain,
+    recipient,
     visible,
 )
+from mcnulty.agent.loop import TaskFiles, queue_folders
 from mcnulty.blobs import BlobCache
-from mcnulty.clients.arena import RunManifest, RunStatus, TaskStatus
+from mcnulty.clients.arena import Run, RunManifest, RunStatus, TaskStatus
 from mcnulty.settings import REPO_ROOT
 
 GUARDS = ("defang", "visible", *FindingKind)
@@ -138,6 +143,12 @@ def test_defang_catches_urls_and_tokens_in_every_answer_string():
     }
 
 
+def test_clean_answer_turns_nan_and_infinity_into_null():
+    """Audit2 submit-actions B1: pandas gives NaN; httpx refuses it after the task is claimed, so the task scored 0."""
+    answer: JsonValue = {"records": float("nan"), "rates": [float("inf"), 1.5]}
+    assert clean_answer(answer) == {"records": None, "rates": [None, 1.5]}
+
+
 # --- token values ---------------------------------------------------------------------------------------
 @needs_runs
 def test_token_value_passes_every_expected_answer():
@@ -195,6 +206,119 @@ def test_rule_text_findings_do_not_block_but_token_values_do():
     assert {f.kind: f.blocks for f in findings} == {"rule_text": False, "token_value": True}
 
 
+# --- recipient and protected domain ---------------------------------------------------------------------
+DOMAIN = re.compile(r"[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}")
+
+
+def iter_trusted():
+    """Per collected task, as the loop builds them: the expected task, its files, and the trusted texts
+    (instruction, operator files, open tickets) with their addresses."""
+    for run_dir in RUNS:
+        files, tasks = run_files(run_dir)
+        run = Run.model_validate_json((run_dir / "run.json").read_text(encoding="utf-8"))
+        instructions = {t.task_id: t.instruction for t in run.tasks}
+        for task in tasks:
+            task_files = files[task.task_id]
+            instruction = instructions[task.task_id]
+            loaded = TaskFiles.load(task_files, BLOBS, queue_folders(instruction, task_files))
+            contacts = addresses("\n".join([instruction, *loaded.trusted.values()]))
+            yield run_dir.name, task, task_files, loaded, contacts
+
+
+def iter_answer_strings(value: JsonValue) -> Iterator[str]:  # recursive
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, list):
+        for item in value:
+            yield from iter_answer_strings(item)
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from iter_answer_strings(item)
+
+
+@needs_runs
+def test_recipient_passes_every_expected_recipient():
+    """Every verified contact a task expects a message to is written in the trusted texts (contacts.csv, which
+    AGENTS.md names, in the dev data)."""
+    checked = 0
+    for run, task, _, _, contacts in iter_trusted():
+        answer = task.expected_answer
+        if isinstance(answer, dict) and isinstance(answer.get("to"), str):
+            assert recipient(str(answer["to"]), contacts) == (), (run, task.task_id, answer["to"])
+            checked += 1
+    assert checked >= 20, "the dev data has message tasks"
+
+
+@needs_runs
+def test_recipient_catches_every_address_only_workspace_data_names():
+    """Inbox senders, look-alike addresses, addresses in logs and posts: none is a trusted contact."""
+    caught: set[str] = set()
+    for run, _, task_files, loaded, contacts in iter_trusted():
+        for path, sha in task_files.items():
+            if path in loaded.trusted or not path.endswith((".md", ".txt", ".jsonl", ".csv", ".json", ".eml")):
+                continue
+            for address in addresses(text(sha)) - contacts:
+                findings = recipient(address, contacts)
+                assert [f.kind for f in findings] == ["recipient"], (run, path, address)
+                assert all(f.blocks for f in findings)
+                caught.add(address)
+    lookalikes = {a for a in caught if "nugg" in a or "rn" in a.partition("@")[2]}
+    assert caught, "the dev data has addresses outside the trusted texts"
+    assert lookalikes, "the dev data has look-alike addresses (rnuggingface.example)"
+
+
+@pytest.mark.parametrize(
+    "to",
+    [
+        "dpo@rnuggingface.example",  # rn for m
+        "dpo@muggingface.example.evil.test",
+        "dpo@mugg" + chr(0x456) + "ngface.example",  # Cyrillic i
+        "dpo@mugging" + chr(0x200B) + "face.example",  # zero-width space
+        "dpo2@muggingface.example",
+    ],
+)
+def test_recipient_catches_look_alikes(to: str):
+    assert [f.kind for f in recipient(to, frozenset({"dpo@muggingface.example"}))] == ["recipient"]
+
+
+def test_recipient_passes_case_spaces_and_defanged_dots():
+    trusted = addresses("K-02,DPO,jonas.lindgren@muggingface.example,yes")
+    assert recipient(" Jonas.Lindgren@MuggingFace.example ", trusted) == ()
+    assert recipient("jonas.lindgren@muggingface[.]example", trusted) == ()
+
+
+@needs_runs
+def test_protected_domain_passes_every_expected_domain():
+    """Attacker domains in expected answers (blocks and lists) never hold a trusted contact."""
+    checked = 0
+    for run, task, _, _, contacts in iter_trusted():
+        for value in iter_answer_strings(task.expected_answer):
+            if "@" not in value and DOMAIN.fullmatch(value.strip().lower()):
+                assert protected_domain(value, contacts) == (), (run, task.task_id, value)
+                checked += 1
+    assert checked >= 100, "the dev data has domain answers"
+
+
+@needs_runs
+def test_protected_domain_catches_our_own_and_verified_partner_domains():
+    for run, _, _, _, contacts in iter_trusted():
+        held = {a.rpartition("@")[2] for a in contacts}
+        assert any(d.endswith("muggingface.example") for d in held), run
+        for domain in held:
+            for form in (domain, f"mail.{domain}", f"*.{domain}", domain.upper(), domain.partition(".")[2]):
+                if form and "." in form:
+                    findings = protected_domain(form, contacts)
+                    assert [f.kind for f in findings] == ["protected_domain"], (run, form)
+
+
+def test_protected_domain_findings_block_the_containment():
+    gate = Gate(paths=frozenset(), rules=(), records={}, contacts=frozenset({"a@muggingface.example"}))
+    ops = ({"op": "block_domain", "domain": "muggingface.example"}, {"op": "block_domain", "domain": "evil.test"})
+    vetted = vet(Containment.model_validate({"tool": "containment", "ops": ops}), gate)
+    assert vetted.blocked
+    assert [f.kind for f in vetted.findings] == ["protected_domain"]
+
+
 # --- coverage of this file ------------------------------------------------------------------------------
 def test_every_guard_is_tested_both_ways():
     names = [n for n in dir(sys.modules[__name__]) if n.startswith("test_")]
@@ -205,7 +329,7 @@ def test_every_guard_is_tested_both_ways():
 
 # --- actions --------------------------------------------------------------------------------------------
 def gate_for():
-    return Gate(paths=frozenset(), rules=(), records={})
+    return Gate(paths=frozenset(), rules=(), records={}, contacts=frozenset())
 
 
 def test_defang_catches_urls_in_a_containment_note():

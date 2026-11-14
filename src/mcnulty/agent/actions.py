@@ -11,6 +11,8 @@ from mcnulty.agent.guards import (
     Finding,
     defang_urls,
     outgoing_findings,
+    protected_domain,
+    recipient,
 )
 from mcnulty.frozen import Frozen, ModelInput
 
@@ -86,6 +88,7 @@ class Gate(Frozen):
     paths: frozenset[str]  # workspace files: the only valid source paths
     rules: tuple[str, ...]  # operator texts that must not be copied out
     records: dict[str, dict[int, str]]  # csv path -> physical line -> record id, for files with a unique first column
+    contacts: frozenset[str]  # addresses in the instruction, operator files and open ticket (``guards.addresses``)
 
 
 class VettedAction(Frozen):
@@ -105,13 +108,14 @@ def tool_args(action: Action):
 
 
 def vet(action: Action, gate: Gate):
-    """Defang outgoing text and check it: no token values, no long copies of the rules."""
+    """Defang outgoing text and check it: no token values, no long copies of the rules, recipients from trusted text,
+    no block of a verified contact's domain."""
     match action:
         case SendMessage():
             defanged = {"subject": defang_urls(action.subject), "body": defang_urls(action.body)}
             action = action.model_copy(update=defanged)
             text = f"{action.subject}\n{action.body}"
-            findings = outgoing_findings(text, gate.rules, frozenset())
+            findings = recipient(action.to, gate.contacts) + outgoing_findings(text, gate.rules, frozenset())
         case WriteDraft():
             action = action.model_copy(update={"content": defang_urls(action.content)})
             findings = outgoing_findings(action.content, gate.rules, frozenset())
@@ -121,5 +125,7 @@ def vet(action: Action, gate: Gate):
                 for op in action.ops
             )
             action = action.model_copy(update={"ops": ops})
-            findings = ()
+            findings = tuple(
+                f for op in ops if isinstance(op, BlockDomain) for f in protected_domain(op.domain, gate.contacts)
+            )
     return VettedAction(action=action, findings=findings)

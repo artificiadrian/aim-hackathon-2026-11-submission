@@ -19,7 +19,7 @@ from pydantic import ValidationError
 
 from mcnulty.agent.actions import Gate
 from mcnulty.agent.citations import line_records
-from mcnulty.agent.guards import visible
+from mcnulty.agent.guards import addresses, visible
 from mcnulty.agent.jev import MAX_LINES, TEXT_TYPES, asked, classify, classify_report, lines_of
 from mcnulty.agent.prompt import (
     CUT_REPLY,
@@ -76,6 +76,7 @@ LAST_CALL_LEFT = 240.0  # seconds before the deadline: the next call is the subm
 CALL_RESERVE = 60.0  # seconds before the deadline at which a model call stops waiting or retrying
 SOURCE_OF_TRUTH = "/AGENTS.md"  # docs/ARENA_DOCS.md: it names the other operator files
 STATUS = re.compile(r"(?mi)^status:\s*(\S+)")  # a ticket's front matter (docs/ARENA_DOCS.md, ticket tasks)
+SCAN_NOTE = "[text of the scanned image, read for you; cite the image by its path]\n"
 INLINE_MAX = 20_000  # characters of one operator file or ticket in the first message
 NOT_TEXT = "[not a plain text file: read it with text(path) in a script, or with view_image if it is an image]"
 IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
@@ -101,9 +102,11 @@ def named(text: str, paths: Iterable[str]):
 
 
 def queue_folders(instruction: str, files: dict[str, str]):
-    """The folders the instruction names (e.g. the ticket queue): their files are the request or its history."""
+    """The folders the instruction names as folders (e.g. the ticket queue ``/tickets/``): their files are the request
+    or its history. A named file does not name its folders (``/intel/scans/a.jpg`` names neither ``/intel`` nor
+    ``/intel/scans``), so data next to a named file never becomes a ticket."""
     folders = {str(PurePosixPath(p).parent) for p in files} - {"/"}
-    return frozenset(named(instruction, sorted(folders)))
+    return frozenset(f for f in sorted(folders) if re.search(re.escape(f) + r"/?(?![\w/-]|\.\w)", instruction))
 
 
 def in_folders(path: str, folders: frozenset[str]):
@@ -159,6 +162,11 @@ def scans_to_read(files: dict[str, str], folders: frozenset[str]):
     return [p for p in sorted(files) if in_folders(p, folders) and image_url(b"", p) is not None][:SCANS_MAX]
 
 
+def task_images(instruction: str, files: dict[str, str]):
+    """Images the instruction names (scanned indicator pages): transcribed up front as data, never as tickets."""
+    return [p for p in named(instruction, sorted(files)) if image_url(b"", p) is not None][:SCANS_MAX]
+
+
 def named_images(files: dict[str, str], blobs: BlobCache):
     """Images that the operator files name (``/AGENTS.md`` and the files it names), e.g. a standing order the runbook
     points to: about 30 % of tasks read one with view_image (docs/research/2026-11-14-fewer-model-calls.md, P2)."""
@@ -189,10 +197,25 @@ class Deadline(Frozen):
 NO_DEADLINE = Deadline(end=math.inf)
 
 
+def ticket_head(ticket: str):
+    """Where a ticket's status may stand: its front matter (``---`` block), else its first 3 lines (a scan's status
+    line). A ``status:`` line further down is body text, e.g. a quoted mail, not the ticket's status."""
+    text = ticket.removeprefix(SCAN_NOTE).lstrip()
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        return text[: end if end != -1 else len(text)]
+    return "\n".join(text.splitlines()[:3])
+
+
+def ticket_status(ticket: str):
+    status = STATUS.search(ticket_head(ticket))
+    return status.group(1).lower() if status else None
+
+
 def closed(ticket: str):
     """A ticket whose status is set and is not open; the request is the open ticket (platform docs)."""
-    status = STATUS.search(ticket)
-    return status is not None and status.group(1).lower() != "open"
+    status = ticket_status(ticket)
+    return status is not None and status != "open"
 
 
 class TaskFiles(Frozen):
@@ -223,7 +246,7 @@ class TaskFiles(Frozen):
         def text(path: str):
             """The file as text; a note instead when it is not text (a scanned ticket) or too long to inline."""
             if path in transcripts:
-                return f"[text of the scanned image, read for you; cite the image by its path]\n{transcripts[path]}"
+                return SCAN_NOTE + transcripts[path]
             data = blobs.get(files[path]) if path in files else None
             if data is None:
                 return ""
@@ -241,7 +264,7 @@ class TaskFiles(Frozen):
         names += [p for p in named(root, sorted(files)) if p != SOURCE_OF_TRUTH]
         operator = {p: text(p) for p in names}
         queued = {p: text(p) for p in sorted(files) if in_folders(p, queues) and p not in operator}
-        tickets = {p: t for p, t in queued.items() if STATUS.search(t) or p in transcripts}
+        tickets = {p: t for p, t in queued.items() if ticket_status(t) or p in transcripts}
         return cls(
             paths=files,
             sizes={p: len(blobs.get(sha) or b"") for p, sha in files.items()},
@@ -326,7 +349,7 @@ def solve(
 ):
     """``transcripts``: the run's image transcripts, shared by its tasks (a fresh cache when None)."""
     folders = queue_folders(task.instruction, files)
-    images = [*scans_to_read(files, folders), *named_images(files, blobs)]
+    images = [*scans_to_read(files, folders), *task_images(task.instruction, files), *named_images(files, blobs)]
     scans = transcribe(rec, llm, files, blobs, dict.fromkeys(images), transcripts or Transcripts())
     task_files = TaskFiles.load(files, blobs, folders, scans)
     box = TaskSandbox.create(rec, pool, task.task_id, files, blobs)
@@ -348,6 +371,7 @@ def loop(rec: Recorder, tools: Tools, task: Task, deadline: Deadline) -> Solutio
         paths=frozenset(files.paths),
         rules=files.rules,
         records=files.records,
+        contacts=addresses("\n".join([task.instruction, *files.trusted.values()])),
     )
     overview = tools.box.run(rec, "print(columns())", timeout=60.0)  # table headers: no column guessing
     tables = overview.stdout.text.strip() if overview.exit_code == 0 else ""

@@ -302,3 +302,21 @@ Format example (ignored: it sits in a code block). Write your entries below it, 
 - rejected: a cap on citations in code (the expected count is unknown at submit time)
 - evidence: tests/test_eval.py::test_grade_estimates_the_over_citing_cut; host checks pass; the real rule comes
   from the next live run's feedback
+
+## 17:10 · Recipient and protected-domain checks, tickets only from a ticket's head, named files name no queue
+
+- decided_by: both
+- why: audit2 (docs/research/2026-11-14-audit2-summary.md D1-D3): no code check stopped a message to an address
+  only workspace data names, or a block of our own or a partner's domain; a named file made its parent folders
+  ticket queues (130504Z t36: a decoy image became a trusted ticket), and a "status: open" line anywhere promoted a
+  queued file
+- decision: a message goes only to an address written in the instruction, the operator files or the open ticket
+  (no file names: contacts.csv counts because AGENTS.md names it); a block_domain op is blocked for the domain of
+  a trusted address, its parents and subdomains; both block, and the model is told once. A ticket's status is read
+  from its front matter or first 3 lines; only a folder the instruction names as a folder is a queue; images the
+  instruction names are transcribed up front as data. Also: NaN/Infinity in an answer become null; the run starts
+  before the tool list, which may fail
+- rejected: parsing a "verified" column (dev file layout); the earlier contacts.csv recipient check (dev file name)
+- evidence: tests/test_guards.py on all collected runs: 28 expected recipients and 188 expected domains pass, 223
+  distinct addresses only workspace data names are blocked (look-alikes rnuggingface.example and Cyrillic i among
+  them); ticket sets unchanged in 624 tasks; 168 tasks lose parent-folder queues (t07: 4 images were tickets)
