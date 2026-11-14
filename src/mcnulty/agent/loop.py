@@ -8,6 +8,7 @@ side effects (blob reads, model calls, sandbox runs); ``prompt`` and ``submit`` 
 
 import base64
 import math
+import re
 import time
 from dataclasses import dataclass
 
@@ -60,6 +61,7 @@ MAX_TOKENS = 3000  # per model reply
 LAST_CALL_LEFT = 240.0  # seconds before the deadline: the next call is the submit-only last step
 CALL_RESERVE = 60.0  # seconds before the deadline at which a model call stops waiting or retrying
 OPERATOR_FILES = ("/AGENTS.md", "/runbook.md")
+STATUS = re.compile(r"(?mi)^status:\s*(\S+)")  # a ticket's front matter (docs/ARENA_DOCS.md, ticket tasks)
 IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
 
 
@@ -76,12 +78,19 @@ class Deadline(Frozen):
 NO_DEADLINE = Deadline(end=math.inf)
 
 
+def closed(ticket: str):
+    """A ticket whose status is set and is not open; the request is the open ticket (platform docs)."""
+    status = STATUS.search(ticket)
+    return status is not None and status.group(1).lower() != "open"
+
+
 class TaskFiles(Frozen):
     """A task's files as the loop needs them, read once from the blob cache."""
 
     paths: dict[str, str]  # path -> sha256
     sizes: dict[str, int]
-    trusted: dict[str, str]  # operator files and tickets: path -> text
+    trusted: dict[str, str]  # operator files and open tickets: path -> text
+    history: dict[str, str]  # tickets with another status: history, not a request (platform docs)
     contacts: str  # /contacts.csv, empty when missing
     records: dict[str, dict[int, str]]  # csv path -> line -> record id (``citations.line_records``)
 
@@ -96,7 +105,8 @@ class TaskFiles(Frozen):
         return cls(
             paths=files,
             sizes={p: len(blobs.get(sha) or b"") for p, sha in files.items()},
-            trusted=operator | tickets,
+            trusted=operator | {p: t for p, t in tickets.items() if not closed(t)},
+            history={p: t for p, t in tickets.items() if closed(t)},
             contacts=text("/contacts.csv"),
             records={p: line_records(text(p)) for p in files if p.endswith(".csv")},
         )
@@ -177,7 +187,7 @@ def loop(rec: Recorder, tools: Tools, task: Task, deadline: Deadline) -> Solutio
     )
     messages: list[Message] = [
         SystemMessage(content=SYSTEM),
-        UserMessage(content=first_message(task.instruction, files.trusted, files.sizes)),
+        UserMessage(content=first_message(task.instruction, files.trusted, files.history, files.sizes)),
     ]
     locators_asked = False
     rejected_before = False

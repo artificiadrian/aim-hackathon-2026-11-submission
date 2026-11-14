@@ -26,6 +26,7 @@ type Outcome = Literal["OK", "DENIED_SECURITY", "NEEDS_CLARIFICATION", "UNSUPPOR
 type RunKind = Literal["dev", "final"]
 MAX_NOTE = 500  # characters in a run note
 RETRIES = 7
+ENDED = frozenset({"finished", "closed", "ended", "expired"})  # run statuses after which nothing is accepted
 ZIP_MEMBER_MAX = 512 * 1024 * 1024  # bytes: a larger member is fetched by itself
 NOT_RUN = frozenset({502, 503, 504})  # gateway answers: the request did not reach the Task API
 
@@ -51,6 +52,16 @@ class Run(Open):
     variation: int | None = None
     deadline_at: str | None = None
     tasks: tuple[Task, ...] = ()
+
+
+class RunSummary(Open):
+    run_id: str
+    kind: RunKind | None = None
+    status: str | None = None
+
+
+class RunList(Open):
+    runs: tuple[RunSummary, ...] = ()
 
 
 class ToolSpec(Open):
@@ -254,6 +265,14 @@ class ArenaClient:
         if seed is not None:
             body["seed"] = seed
         return Run.model_validate_json(self.send(rec, "POST", "/runs", body).content)
+
+    def active_final(self, rec: Recorder):
+        """The final run that is still open (after a container restart), or None."""
+        runs = RunList.model_validate_json(self.send(rec, "GET", "/runs").content).runs
+        open_finals = [r for r in runs if r.kind == "final" and (r.status or "").lower() not in ENDED]
+        if not open_finals:
+            return None
+        return Run.model_validate_json(self.send(rec, "GET", f"/runs/{open_finals[-1].run_id}").content)
 
     def run_status(self, rec: Recorder, run_id: str):
         return RunStatus.model_validate_json(self.send(rec, "GET", f"/runs/{run_id}").content)

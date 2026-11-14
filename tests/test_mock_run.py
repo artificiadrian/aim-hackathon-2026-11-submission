@@ -19,7 +19,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 import mock_server  # pyright: ignore[reportImplicitRelativeImport] - given organiser code, loaded from tests/
 
 from mcnulty.blobs import BlobCache
-from mcnulty.clients.arena import ArenaClient, ArenaError
+from mcnulty.clients.arena import ArenaClient, ArenaError, RunMeta
+from mcnulty.commands.run import RunArgs, start_or_resume
 from mcnulty.record.events import Envelope, HttpExchange, RunFinished, TaskFinished
 from mcnulty.record.log import EventLog, Recorder
 
@@ -178,3 +179,26 @@ def test_parallel_tasks_download_a_shared_large_file_once(tmp_path: Path):
     for t in threads:
         t.join()
     assert len(asked) == 1
+
+
+def test_a_restarted_final_resumes_the_open_final_run(tmp_path: Path):
+    """Review OP8: after a container restart, POST /runs answers 409 (final already used); go on with that run."""
+
+    def handler(request: httpx.Request):
+        if request.method == "POST":
+            return httpx.Response(409, json={"error": "final run already used"})
+        if request.url.path.endswith("/runs"):
+            runs = [{"run_id": "run_old", "kind": "final", "status": "finished"}, {"run_id": "run_f", "kind": "final"}]
+            return httpx.Response(200, json={"runs": runs})
+        tasks = [{"task_id": "t01", "instruction": "x", "level": 1}]
+        return httpx.Response(200, json={"run_id": "run_f", "kind": "final", "tasks": tasks})
+
+    arena = ArenaClient(
+        http=httpx.Client(base_url="http://arena.test/api/v1", transport=httpx.MockTransport(handler)),
+        cache=BlobCache(root=tmp_path / "blobs"),
+    )
+    rec = Recorder(events=EventLog(run_dir=tmp_path / "run"))
+    run = start_or_resume(rec, arena, RunArgs(kind="final"), RunMeta())
+    assert (run.run_id, [t.task_id for t in run.tasks]) == ("run_f", ["t01"])
+    with pytest.raises(ArenaError):
+        start_or_resume(rec, arena, RunArgs(kind="dev"), RunMeta())

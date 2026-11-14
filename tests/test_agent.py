@@ -3,7 +3,8 @@
 import json
 
 from mcnulty.agent.citations import fixed_sources, line_records
-from mcnulty.agent.prompt import OUTPUT_MAX, SYSTEM, file_tree, script_output, shorten_old_outputs
+from mcnulty.agent.loop import closed
+from mcnulty.agent.prompt import OUTPUT_MAX, SYSTEM, file_tree, first_message, script_output, shorten_old_outputs
 from mcnulty.agent.submit import (
     Accepted,
     Rejected,
@@ -169,3 +170,12 @@ def test_the_prompt_names_every_submit_field_and_action_form():
         assert f'"op": "{op}"' in SYSTEM, op
     for tool in ("containment", "send_message", "write"):
         assert f'"tool": "{tool}"' in SYSTEM, tool
+
+
+def test_a_closed_ticket_is_history_and_the_open_one_the_request():
+    """docs/ARENA_DOCS.md, ticket tasks: the request is the ticket with status: open; a closed one is history."""
+    assert closed("---\nticket: IR-1\nstatus: closed\n---\nRotate TOK-1.")
+    assert not closed("---\nticket: IR-2\nstatus: open\n---\nList the ids.")
+    assert not closed("A ticket without front matter.")
+    message = first_message("Work the open ticket.", {"/tickets/IR-2.md": "open one"}, {"/tickets/IR-1.md": "old"}, {})
+    assert "/tickets/IR-1.md (closed ticket: history, not a request)" in message

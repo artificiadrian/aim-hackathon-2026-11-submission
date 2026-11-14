@@ -27,6 +27,7 @@ from mcnulty.clients.arena import (
     Run,
     RunKind,
     RunManifest,
+    RunMeta,
     Submission,
     Task,
     git_meta,
@@ -94,6 +95,18 @@ class Submitter:
         return result.score, result.feedback
 
 
+def start_or_resume(rec: Recorder, arena: ArenaClient, args: RunArgs, meta: RunMeta):
+    """A new run; for the final after a restart (409: already used) the final run that is still open."""
+    try:
+        return arena.start_run(rec, args.kind, args.seed if args.kind == "dev" else None, meta)
+    except ArenaError as e:
+        resumed = arena.active_final(rec) if e.status == 409 and args.kind == "final" else None
+        if resumed is None:
+            raise
+        print(f"resuming final run {resumed.run_id} after a restart")
+        return resumed
+
+
 def run_tasks(settings: Settings, args: RunArgs, started: float):
     run_dir = Path("runs") / time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     rec = Recorder(events=EventLog(run_dir=run_dir, secrets=settings.secrets))
@@ -103,7 +116,7 @@ def run_tasks(settings: Settings, args: RunArgs, started: float):
     try:
         tools = arena.tools(rec)
         meta = git_meta().model_copy(update={"note": args.note})
-        run = arena.start_run(rec, args.kind, args.seed if args.kind == "dev" else None, meta)
+        run = start_or_resume(rec, arena, args, meta)
     except ArenaError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

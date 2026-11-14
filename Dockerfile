@@ -7,8 +7,9 @@
 # Test it locally:
 #   docker build -t mcnulty . && docker run --rm --env-file .env -e ARENA_RUN_KIND=dev mcnulty --tasks t01
 
-FROM python:3.12-slim-bookworm
-COPY --from=ghcr.io/astral-sh/uv:0.9.11 /uv /usr/local/bin/uv
+# Pinned by digest (the tag can move between our build and the organisers' build).
+FROM python:3.12-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df
+COPY --from=ghcr.io/astral-sh/uv:0.9.11@sha256:5aa820129de0a600924f166aec9cb51613b15b68f1dcd2a02f31a500d2ede568 /uv /usr/local/bin/uv
 
 # The sandbox libraries go into the system Python. The harness has its own /app/.venv, which does not see them, and
 # at start src/mcnulty/agent/sandbox.py copies this root filesystem (without /app, uv, ...) as the sandbox's root.

@@ -181,3 +181,11 @@ Format example (ignored: it sits in a code block). Write your entries below it, 
   md 108/108); interpreter start 69 ms with the helpers loaded. The live test is not run yet: the key in .env got a
   401 from openrouter.ai
 
+## 16:30 · Closed tickets are history again (platform docs)
+
+- decided_by: ai
+- why: at 15:30 the closed-ticket split was removed as dev-fitted; docs/ARENA_DOCS.md (ticket tasks) says the
+  request is the ticket with `status: open` and a closed ticket is "history, not a request": a platform rule, not
+  dev data. A ticket without a status stays a request
+- evidence: docs/ARENA_DOCS.md lines 82-84
+
