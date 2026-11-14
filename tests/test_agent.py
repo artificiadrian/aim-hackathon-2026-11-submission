@@ -5,8 +5,10 @@ import json
 from mcnulty.agent.citations import fixed_sources, line_records
 from mcnulty.agent.prompt import OUTPUT_MAX, file_tree, script_output, shorten_old_outputs
 from mcnulty.agent.submit import (
+    SUBMIT_SCHEMA,
     Accepted,
     Rejected,
+    SubmitArgs,
     check_submit,
     missing_locators,
     parse_submit,
@@ -165,3 +167,15 @@ def test_an_inbox_task_cites_its_message():
     fixed = fixed_sources((), {}, "There is one new message in /inbox/. Deal with it.", paths)
     assert fixed == (Source(path="/inbox/mail_0412.md"),)
     assert fixed_sources((), {}, "Which agents leaked tokens?", paths) == ()
+
+
+def test_the_hand_written_submit_schema_matches_the_models():
+    """The schema the model sees is short; pydantic validates. Both must name the same fields and kinds."""
+    schema = json.dumps(SUBMIT_SCHEMA)
+    for field in (*Source.model_fields, *SubmitArgs.model_fields):
+        assert f'"{field}"' in schema, field
+    for op in ("quarantine_agent", "release_agent", "revoke_token", "rotate_token", "block_domain"):
+        assert f'\\"{op}\\"' in schema, op
+    for tool in ("containment", "send_message", "write"):
+        assert f'\\"{tool}\\"' in schema, tool
+    assert len(schema) < 1500

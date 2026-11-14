@@ -81,11 +81,49 @@ VIEW_IMAGE = ToolDefinition(
         },
     )
 )
+STRING: JsonValue = {"type": "string"}
+INTEGER: JsonValue = {"type": "integer"}
+# Hand-written: the generated schema is 4,600 characters on every call. Pydantic still validates the arguments.
+SUBMIT_SCHEMA: dict[str, JsonValue] = {
+    "type": "object",
+    "properties": {
+        "outcome": {"enum": ["OK", "DENIED_SECURITY", "NEEDS_CLARIFICATION", "UNSUPPORTED"]},
+        "answer": {"description": "any JSON value, in the format the task asks"},
+        "sources": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "path": STRING,
+                    "line": INTEGER,
+                    "record": STRING,
+                    "sheet": STRING,
+                    "row": INTEGER,
+                    "paragraph": INTEGER,
+                    "page": INTEGER,
+                },
+                "required": ["path"],
+            },
+        },
+        "actions": {
+            "type": "array",
+            "description": (
+                'only what the task asks for: {"tool": "containment", "ops": [{"op": "quarantine_agent", "agent", '
+                '"stand_in"?} | {"op": "release_agent", "agent"} | {"op": "revoke_token", "token"} | '
+                '{"op": "rotate_token", "token", "at": "YYYY-MM-DDTHH:00:00Z"} | {"op": "block_domain", "domain"}]} | '
+                '{"tool": "send_message", "to", "subject", "body"} | '
+                '{"tool": "write", "path": "/drafts/...", "content"}'
+            ),
+            "items": {"type": "object"},
+        },
+    },
+    "required": ["outcome", "answer"],
+}
 SUBMIT = ToolDefinition(
     function=FunctionSpec(
         name="submit",
         description="Finish the task: the outcome, the answer, its sources and the actions the task asks for.",
-        parameters=SubmitArgs.model_json_schema(),
+        parameters=SUBMIT_SCHEMA,
     )
 )
 TOOLS = (RUN_PYTHON, VIEW_IMAGE, SUBMIT)
