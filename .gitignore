@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+runs/
+.cache/
+.env
+.env.*
+!.env.example
+node_modules/
+submission.tar.gz
+.DS_Store
