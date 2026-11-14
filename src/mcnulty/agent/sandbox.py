@@ -169,7 +169,8 @@ def ensure_base(pool: SandboxPool):
         shutil.rmtree(partial, ignore_errors=True)
         partial.mkdir(parents=True)
         top = [f"/{name}" for name in COPIED if Path(f"/{name}").exists() or Path(f"/{name}").is_symlink()]
-        subprocess.run(["/bin/cp", "-a", *top, str(partial)], check=True)  # noqa: S603
+        # no ownership: the final container has no CHOWN capability (demo check 16:10); root owns the copy
+        subprocess.run(["/bin/cp", "-a", "--no-preserve=ownership", *top, str(partial)], check=True)  # noqa: S603
         for name in NOT_IN_SANDBOX:
             (partial / name).unlink(missing_ok=True)
         (partial / "tmp").mkdir()
