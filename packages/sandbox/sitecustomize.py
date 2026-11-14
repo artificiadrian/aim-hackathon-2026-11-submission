@@ -13,10 +13,16 @@ Less noise: pypdf logs a warning per font it cannot map (2.3 MB for the PDFs of 
 """
 
 import builtins
+import datetime
 import json
 import logging
 import os
 import sys
+
+from pydantic import BaseModel
+from ws.files import cite, grep, text
+from ws.models import Hit
+from ws.shell import sh
 
 NETWORK = frozenset({"socket.connect", "socket.bind", "socket.getaddrinfo", "socket.gethostbyname", "socket.sendto"})
 
@@ -26,7 +32,7 @@ class NoNetwork(PermissionError):
         super().__init__("the sandbox has no network: work only with the files of the workspace")
 
 
-def no_network(event: str, args: tuple[object, ...]):
+def no_network(event: str, _args: tuple[object, ...]):
     if event in NETWORK:
         raise NoNetwork
 
@@ -39,19 +45,21 @@ class NotJson(TypeError):
         super().__init__(f"submit: {type(value).__name__} is not a JSON value")
 
 
-def plain(value: object):
-    """numpy and pandas values (int64, Timestamp, arrays), tuples or sets, and the helpers' models (a ``Hit`` as its
-    source) as plain JSON values."""
-    if hasattr(value, "source") and hasattr(value, "model_dump"):
+def plain(value: object) -> object:  # json.dumps(default=...) takes any value back
+    """The helpers' models (a ``Hit`` as its source), numpy and pandas values (int64, Timestamp, arrays), dates, and
+    tuples or sets as plain JSON values."""
+    if isinstance(value, Hit):
         value = value.source  # a Hit cited as it is
-    if hasattr(value, "model_dump"):
+    if isinstance(value, BaseModel):
         return value.model_dump(mode="json", exclude_none=True)
-    if hasattr(value, "tolist"):
-        return value.tolist()  # numpy scalars and arrays
-    if hasattr(value, "isoformat"):
-        return value.isoformat()  # datetime, pandas Timestamp
+    if isinstance(value, datetime.date):
+        return value.isoformat()  # also pandas Timestamp
     if isinstance(value, set | frozenset | tuple):
-        return list(value)
+        return list(value)  # pyright: ignore[reportUnknownArgumentType] - any items; json.dumps checks them
+    if type(value).__module__ == "numpy":
+        import numpy as np
+
+        return np.asarray(value).tolist()  # pyright: ignore[reportAny] - numpy's own nested lists
     raise NotJson(value)
 
 
@@ -70,11 +78,6 @@ def submit(outcome: str, answer: object = None, sources: object = (), actions: o
     print("submit(...) received; the harness checks it when this script ends.")
 
 
-builtins.submit = submit
-
-from ws.files import cite, grep, text  # noqa: E402 - the helpers sit next to this file; after the network hook
-from ws.shell import sh  # noqa: E402
-
-for helper in (text, cite, grep, sh):
+for helper in (submit, text, cite, grep, sh):
     setattr(builtins, helper.__name__, helper)
 logging.getLogger("pypdf").setLevel(logging.ERROR)

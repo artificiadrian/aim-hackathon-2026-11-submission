@@ -15,6 +15,7 @@ mcnulty = "mcnulty.cli:main"
 [dependency-groups]
 dev = [
     "basedpyright>=1.40.2",
+    "mcnulty-sandbox",
     "pypdf>=7.1.0",
     "pytest>=9.2.0",
     "ruff>=0.17.5",
@@ -52,7 +53,7 @@ typeCheckingMode = "recommended"
 reportUnusedCallResult = false
 reportImplicitOverride = "error"
 reportMatchNotExhaustive = "error"
-include = ["src", "tests"]  # sandbox/ runs on the image's system Python (pandas, ...): tested in the image
+include = ["src", "tests", "packages/sandbox"]
 # Given organiser code, kept as is (see AGENTS.md).
 exclude = ["tests/mock_server.py"]
 
@@ -60,3 +61,11 @@ exclude = ["tests/mock_server.py"]
 strict = true
 filterwarnings = ["error"]
 testpaths = ["tests"]
+
+[tool.uv.workspace]
+members = [
+    "packages/sandbox",
+]
+
+[tool.uv.sources]
+mcnulty-sandbox = { workspace = true }

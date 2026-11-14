@@ -1,0 +1,29 @@
+[project]
+name = "mcnulty-sandbox"
+version = "0.1.0"
+description = "What model-written code gets inside the sandbox: helpers (ws) and sitecustomize (no network, submit)."
+authors = [
+    { name = "artificiadrian", email = "36929853+artificiadrian@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.5.4",
+    "odfpy>=1.4.1",
+    "openpyxl>=3.1.5",
+    "pandas>=3.1.1",
+    "pillow>=13.0.0",
+    "pydantic>=2.14.3",
+    "pypdf>=7.1.0",
+    "python-docx>=1.2.0",
+    "pyyaml>=6.0.3",
+    "tzdata>=2026.6",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.6,<0.14.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+# The helpers only. sitecustomize.py (next to this file) is copied into the image's system Python by the Dockerfile,
+# never installed: in the shared dev venv it would block the harness's own network.
+module-name = "ws"

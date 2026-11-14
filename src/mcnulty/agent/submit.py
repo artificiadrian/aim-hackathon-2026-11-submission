@@ -81,7 +81,7 @@ VIEW_IMAGE = ToolDefinition(
         },
     )
 )
-TOOLS = (RUN_PYTHON, VIEW_IMAGE)  # finishing is submit(...) inside a script (sandbox/sitecustomize.py)
+TOOLS = (RUN_PYTHON, VIEW_IMAGE)  # finishing is submit(...) inside a script (packages/sandbox/sitecustomize.py)
 
 
 class RunPythonArgs(ModelInput):

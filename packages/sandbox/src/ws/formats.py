@@ -15,13 +15,15 @@ import json
 import warnings
 from pathlib import Path
 
-from pydantic import TypeAdapter
+from pydantic import JsonValue, TypeAdapter
 
 from ws.models import Source, Unit
+from ws.untyped import ods_units, odt_units
 
 IMAGES = (".png", ".jpg", ".jpeg", ".gif", ".webp")
 CACHE = Path("/tmp/.ws")  # noqa: S108 - the task's own scratch folder inside the sandbox
 UNITS = TypeAdapter(list[Unit])
+JSON: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 
 
 def read_text(path: str):
@@ -46,13 +48,14 @@ def csv_units(path: str):
 
 
 def json_units(path: str):
-    value: object = json.loads(read_text(path))
+    value = JSON.validate_json(read_text(path))
     if isinstance(value, dict) and len(value) == 1:
         value = next(iter(value.values()))  # {"items": [...]}
-    if isinstance(value, list) and value and all(isinstance(item, dict) and "id" in item for item in value):
+    items = [item for item in value if isinstance(item, dict) and "id" in item] if isinstance(value, list) else []
+    if items and isinstance(value, list) and len(items) == len(value):
         return [
             Unit(source=Source(path=path, record=str(item["id"])), text=json.dumps(item, ensure_ascii=False))
-            for item in value
+            for item in items
         ]
     return [Unit(source=Source(path=path), text=read_text(path))]
 
@@ -76,41 +79,10 @@ def xlsx_units(path: str):
     return found
 
 
-def ods_units(path: str):
-    import pandas as pd
-
-    found: list[Unit] = []
-    for name, frame in pd.read_excel(path, engine="odf", header=None, sheet_name=None).items():
-        for index, row in frame.iterrows():
-            cells = tuple("" if pd.isna(v) else str(v) for v in row)
-            if any(cells):
-                source = Source(path=path, sheet=str(name), row=int(str(index)) + 1)
-                found.append(Unit(source=source, text=" | ".join(c for c in cells if c), cells=cells))
-    return found
-
-
 def docx_units(path: str):
     import docx
 
     texts = [p.text for p in docx.Document(path).paragraphs if p.text.strip()]
-    return [Unit(source=Source(path=path, paragraph=n), text=t) for n, t in enumerate(texts, 1)]
-
-
-def odt_units(path: str):
-    from odf import teletype
-    from odf.namespaces import OFFICENS, TEXTNS
-    from odf.opendocument import load
-
-    paragraphs: list[str] = []
-    stack: list[object] = [load(path).text]
-    while stack:  # document order; comments (office:annotation) are not body text
-        node = stack.pop()
-        name = getattr(node, "qname", None)
-        if name in ((TEXTNS, "p"), (TEXTNS, "h")):
-            paragraphs.append(teletype.extractText(node))
-        elif name != (OFFICENS, "annotation"):
-            stack.extend(reversed(getattr(node, "childNodes", [])))
-    texts = [t for t in paragraphs if t.strip()]
     return [Unit(source=Source(path=path, paragraph=n), text=t) for n, t in enumerate(texts, 1)]
 
 

@@ -135,7 +135,7 @@ def read_stream(file: BinaryIO):
 
 
 def last_submission(file: BinaryIO):
-    """The JSON of the last ``submit(...)`` call: one line per call, written by ``sandbox/sitecustomize.py``."""
+    """The JSON of the last ``submit(...)`` call: one line per call (``packages/sandbox/sitecustomize.py``)."""
     file.seek(0)
     calls = file.read().decode("utf-8", errors="replace").splitlines()
     return calls[-1] if calls else None

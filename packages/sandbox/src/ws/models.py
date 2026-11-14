@@ -1,6 +1,6 @@
 """What the helpers return: pydantic models, so they print, serialize and go into submit(...) as they are."""
 
-from typing import ClassVar
+from typing import ClassVar, override
 
 from pydantic import BaseModel, ConfigDict
 
@@ -25,8 +25,15 @@ class Source(BaseModel):
     @property
     def where(self):
         """The locator as text, e.g. ``sheet=Alerts row=58``; ``file`` for a path-only citation."""
-        fields = self.model_dump(exclude={"path"}, exclude_none=True)
-        return " ".join(f"{k}={v}" for k, v in fields.items()) or "file"
+        fields = {
+            "line": self.line,
+            "record": self.record,
+            "sheet": self.sheet,
+            "row": self.row,
+            "paragraph": self.paragraph,
+            "page": self.page,
+        }
+        return " ".join(f"{k}={v}" for k, v in fields.items() if v is not None) or "file"
 
 
 class Unit(BaseModel):
@@ -48,6 +55,7 @@ class Shell(BaseModel):
     stderr: str
     exit_code: int | None
 
+    @override
     def __str__(self):
         status = "" if self.exit_code == 0 else f"\n[exit code {self.exit_code}]"
         return self.stdout + (f"\n[stderr]\n{self.stderr}" if self.stderr else "") + status
@@ -61,5 +69,6 @@ class Hit(BaseModel):
     source: Source
     text: str
 
+    @override
     def __str__(self):
         return f"{self.source.path} {self.source.where}| {self.text}"
