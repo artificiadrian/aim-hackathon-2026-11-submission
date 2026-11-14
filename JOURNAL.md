@@ -50,3 +50,10 @@ Format example (ignored: it sits in a code block). Write your entries below it, 
 - why: a global recorder (contextvars, module state, start()) hides who logs what; a Recorder object that carries its task context and logs pydantic events is plain to read and to replay
 - rejected: transport hook and module-level state (implicit); the kit's dict-based code style
 - evidence: tests/test_mock_run.py: every event parses back as a typed Envelope, no key in events.jsonl
+
+## 11:10 · Three principles: keep it simple, type everything, record it all
+
+- decided_by: human
+- why: one small harness that we can read, check and replay beats a clever one; typed models catch API drift at the boundary; full records let us debug any task after the run
+- rejected: raw dicts across functions, global state, stdout-only results
+- evidence: mcnulty check passes on typed request and response models (run_DaQJ7V011XKX, $0.00015); every task and run end is a typed event
