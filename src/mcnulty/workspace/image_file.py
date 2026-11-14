@@ -6,6 +6,7 @@ Text hidden in the pixels themselves (steganography) is out of reach.
 
 import hashlib
 import io
+from collections.abc import Iterable
 from pathlib import PurePosixPath
 from typing import Literal
 
@@ -50,20 +51,20 @@ def as_text(value: object):
     return text[:TEXT_MAX]
 
 
+def texts(items: Iterable[tuple[object, object]]):
+    """Each key with its value as text, for the values that are text (Pillow types these values as Any)."""
+    return [(str(key), text) for key, value in items if (text := as_text(value))]
+
+
 def metadata_text(image: Image.Image):
     found: list[HiddenText] = []
-    for key, value in image.info.items():
-        if key in {"exif", "icc_profile"}:
-            continue  # binary; EXIF is read below
-        text = as_text(value)
-        if text:
-            found.append(HiddenText(where="xmp" if key == "xmp" else "metadata", key=str(key), text=text))
+    for key, text in texts(image.info.items()):
+        if key not in {"exif", "icc_profile"}:  # binary; EXIF is read below
+            found.append(HiddenText(where="xmp" if key == "xmp" else "metadata", key=key, text=text))
     exif = image.getexif()
     fields = {**exif, **exif.get_ifd(ExifTags.IFD.Exif)}  # UserComment sits in the Exif sub-directory
-    for tag_id, value in fields.items():
-        text = as_text(value)
-        if text:
-            found.append(HiddenText(where="exif", key=ExifTags.TAGS.get(tag_id, str(tag_id)), text=text))
+    for tag_id, text in texts(fields.items()):
+        found.append(HiddenText(where="exif", key=ExifTags.TAGS.get(int(tag_id), tag_id), text=text))
     return found
 
 
@@ -76,9 +77,9 @@ def after_end(data: bytes, mime: str):
         end = data.rfind(b"\xff\xd9")
         end = end + 2 if end >= 0 else len(data)
     else:
-        return []
+        return list[HiddenText]()
     text = as_text(data[end:])
-    return [HiddenText(where="after_end", key="", text=text)] if text else []
+    return [HiddenText(where="after_end", key="", text=text)] if text else list[HiddenText]()
 
 
 def parse_image(path: str, data: bytes):

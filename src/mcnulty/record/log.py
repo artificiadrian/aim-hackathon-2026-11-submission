@@ -6,17 +6,15 @@ for); ``for_task`` gives a recorder for one task that writes to the same file. K
 
 import gzip
 import hashlib
-import itertools
-import json
 import re
 import threading
 import time
 from pathlib import Path
 from typing import override
 
-from pydantic import BaseModel, PrivateAttr
+from pydantic import BaseModel, PrivateAttr, ValidationError
 
-from mcnulty.frozen import Frozen
+from mcnulty.frozen import JSON, Frozen
 from mcnulty.record.events import BlobRef, Envelope, Event, JsonBody, TextBody
 
 INLINE_MAX = 64_000  # bytes
@@ -30,7 +28,7 @@ class EventLog(BaseModel):
     run_dir: Path
     secrets: tuple[str, ...] = ()
     _lock: threading.Lock = PrivateAttr(default_factory=threading.Lock)
-    _seq: itertools.count = PrivateAttr(default_factory=lambda: itertools.count(1))
+    _seq: int = PrivateAttr(default=0)
     _t0: float = PrivateAttr(default_factory=time.time)
 
     @override
@@ -45,8 +43,9 @@ class EventLog(BaseModel):
 
     def write(self, task_id: str | None, event: Event):
         with self._lock:
+            self._seq += 1
             envelope = Envelope(
-                seq=next(self._seq),
+                seq=self._seq,
                 t=round(time.time() - self._t0, 3),
                 task_id=task_id,
                 event=event,
@@ -81,7 +80,7 @@ class Recorder(Frozen):
             except UnicodeDecodeError:
                 return self.events.store(raw)
             try:
-                return JsonBody(value=json.loads(text))
-            except ValueError:
+                return JsonBody(value=JSON.validate_json(text))
+            except ValidationError:
                 return TextBody(value=text)
         return self.events.store(raw)

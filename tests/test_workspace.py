@@ -5,6 +5,7 @@ import zipfile
 
 import docx
 import openpyxl
+from openpyxl.worksheet.worksheet import Worksheet
 from PIL import Image, PngImagePlugin
 
 from mcnulty.workspace.csv_file import parse_csv
@@ -63,7 +64,9 @@ def test_xlsx_keeps_title_rows_and_marks_hidden_rows_and_sheets():
     sheet.append(["tx_id", "records_n"])
     sheet.append(["TX-1", 5])
     sheet.row_dimensions[4].hidden = True
-    secret = book.create_sheet("_review")
+    book.create_sheet("_review")
+    secret = book.worksheets[-1]
+    assert isinstance(secret, Worksheet)
     secret.sheet_state = "hidden"
     secret.append(["note"])
     out = io.BytesIO()

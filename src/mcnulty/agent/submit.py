@@ -2,15 +2,14 @@
 
 from typing import Annotated
 
-from pydantic import BeforeValidator, JsonValue, TypeAdapter, ValidationError
+from pydantic import BeforeValidator, JsonValue, ValidationError
 
 from mcnulty.agent.actions import Action, VettedAction, vet
 from mcnulty.clients.arena import Outcome, Source, Submission
 from mcnulty.clients.openrouter import FunctionSpec, ToolDefinition
-from mcnulty.frozen import Frozen
+from mcnulty.frozen import JSON, Frozen
 
 PATH_ONLY = (".png", ".jpg", ".jpeg", ".json")  # cited by path alone
-JSON_VALUE: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 
 
 def source_from_text(value: object):
@@ -88,7 +87,7 @@ def parse_submit(arguments: str):
     args = SubmitArgs.model_validate_json(arguments)
     if isinstance(args.answer, str) and args.answer.strip()[:1] in {"[", "{"}:
         try:
-            value = JSON_VALUE.validate_json(args.answer)
+            value = JSON.validate_json(args.answer)
         except ValidationError:
             return args
         return args.model_copy(update={"answer": value})
@@ -114,8 +113,7 @@ def missing_locators(args: SubmitArgs):
     return [
         s.path
         for s in args.sources
-        if not s.path.lower().endswith(PATH_ONLY)
-        and (s.page, s.line, s.record, s.sheet, s.row, s.paragraph) == (None,) * 6
+        if not s.path.lower().endswith(PATH_ONLY) and s.locators == (None,) * len(s.locators)
     ]
 
 

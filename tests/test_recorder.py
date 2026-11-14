@@ -7,6 +7,8 @@ from mcnulty.record.log import EventLog, Recorder
 
 
 class QuotaError(RuntimeError):
+    status: int
+
     def __init__(self, status: int):
         super().__init__("quota reached")
         self.status = status

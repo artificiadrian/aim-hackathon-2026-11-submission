@@ -1,5 +1,7 @@
 """The agent's pure parts (prompt, submit): submit parsing, the locator check, the file tree, the shortened history."""
 
+import json
+
 from mcnulty.agent.prompt import file_tree, shorten_old_outputs
 from mcnulty.agent.submit import missing_locators, parse_submit, salvage_submit
 from mcnulty.clients.openrouter import Message, ToolMessage, UserMessage
@@ -12,10 +14,8 @@ def test_submit_answer_given_as_json_text_becomes_its_value():
 
 
 def test_sources_without_a_locator_are_found_except_path_only_types():
-    args = parse_submit(
-        '{"outcome": "OK", "answer": 1, "sources": [{"path": "/a.csv"}, {"path": "/b.csv", "record": "R-1"},'
-        ' {"path": "/scan.png"}, {"path": "/registry.json"}]}'
-    )
+    sources = [{"path": "/a.csv"}, {"path": "/b.csv", "record": "R-1"}, {"path": "/scan.png"}, {"path": "/r.json"}]
+    args = parse_submit(json.dumps({"outcome": "OK", "answer": 1, "sources": sources}))
     assert missing_locators(args) == ["/a.csv"]
 
 

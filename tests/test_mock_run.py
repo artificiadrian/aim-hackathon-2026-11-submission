@@ -12,7 +12,7 @@ import pytest
 from pydantic import TypeAdapter
 
 sys.path.insert(0, str(Path(__file__).parent))
-import mock_server
+import mock_server  # pyright: ignore[reportImplicitRelativeImport] - given organiser code, loaded from tests/
 
 from mcnulty.blobs import BlobCache
 from mcnulty.record.events import Envelope, HttpExchange, RunFinished, TaskFinished

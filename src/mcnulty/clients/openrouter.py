@@ -6,7 +6,7 @@ logged to a Recorder.
 
 import threading
 import time
-from typing import Annotated, Literal
+from typing import Annotated, ClassVar, Literal
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, PrivateAttr, ValidationError
@@ -24,6 +24,8 @@ type ReasoningEffort = Literal["none", "low", "medium", "high"]
 
 
 class LLMError(RuntimeError):
+    status: int | None
+
     def __init__(self, url: str, status: int | None, detail: object):
         super().__init__(f"{url} -> {status}: {detail}")
         self.status = status
@@ -44,7 +46,7 @@ class MalformedReply(LLMError):
 class Reply(BaseModel):
     """A platform response: tolerate fields OpenRouter adds."""
 
-    model_config = ConfigDict(frozen=True, extra="allow")
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="allow")
 
 
 # --- chat messages ------------------------------------------------------------------------------------
@@ -237,9 +239,13 @@ class CostTracker(BaseModel):
         return self.cap is not None and self.total >= self.cap
 
 
+def header(response: httpx.Response, name: str):
+    return response.headers[name] if name in response.headers else ""  # noqa: SIM401 - Headers.get is typed Any
+
+
 # --- client -------------------------------------------------------------------------------------------
 class OpenRouterClient(BaseModel):
-    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     http: httpx.Client
     base_url: str
@@ -277,7 +283,7 @@ class OpenRouterClient(BaseModel):
                 rec.log(LlmFailed(url=url, request=body, error=ErrorInfo.from_exception(e)))
             else:
                 ms = int((time.time() - t0) * 1000)
-                response = rec.body(r.content, r.headers.get("content-type", ""))
+                response = rec.body(r.content, header(r, "content-type"))
                 rec.log(LlmExchange(url=url, status=r.status_code, ms=ms, request=body, response=response))
                 if r.status_code == 200:
                     try:
@@ -294,11 +300,11 @@ class OpenRouterClient(BaseModel):
                     or (r.status_code == 402 and "retry-after" in r.headers)
                 ):
                     last = f"{r.status_code}: {r.text[:300]}"
-                    wait = min(float(r.headers.get("retry-after", 0) or 0), 120.0)
+                    wait = min(float(header(r, "retry-after") or 0), 120.0)
                 else:
                     raise LLMError(url, r.status_code, r.text[:500])
             if attempt < RETRIES:
-                time.sleep(max(min(2 * 2**attempt, 30), wait))
+                time.sleep(max(min(2 * (1 << attempt), 30), wait))
         raise RetriesExhausted(url, None, last)
 
     def chat(

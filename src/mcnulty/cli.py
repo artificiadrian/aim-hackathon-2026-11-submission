@@ -9,6 +9,7 @@ Every run records all requests and responses to runs/<UTC time>/events.jsonl.
 """
 
 import argparse
+import io
 import sys
 from pathlib import Path
 
@@ -19,6 +20,22 @@ from mcnulty.commands.check import live_check
 from mcnulty.commands.evaluate import EvalArgs, eval_tasks
 from mcnulty.commands.run import RunArgs, run_tasks
 from mcnulty.settings import load_settings
+
+
+class Namespace(argparse.Namespace):
+    """The parsed command line, typed; ``to_args`` validates it into the command's model."""
+
+    command: str = ""
+    kind: str = "dev"
+    parallel: int = 12
+    run_dir: Path = Path()
+    max_usd: float = 0.0
+    note: str | None = None
+    seed: int | None = None
+    tasks: str = ""
+    level: str = ""
+    match: str | None = None
+    limit: int | None = None
 
 
 def build_parser(default_kind: str | None):
@@ -49,7 +66,7 @@ def build_parser(default_kind: str | None):
     return p
 
 
-def filter_data(ns: argparse.Namespace):
+def filter_data(ns: Namespace):
     return {
         "tasks": [t for t in ns.tasks.split(",") if t],
         "levels": [int(x) for x in ns.level.split(",") if x],
@@ -58,7 +75,7 @@ def filter_data(ns: argparse.Namespace):
     }
 
 
-def to_args(p: argparse.ArgumentParser, ns: argparse.Namespace):
+def to_args(p: argparse.ArgumentParser, ns: Namespace):
     try:
         if ns.command == "collect":
             return RunArgs.model_validate({"kind": "dev", "note": ns.note, "seed": ns.seed, "collect": True})
@@ -72,10 +89,11 @@ def to_args(p: argparse.ArgumentParser, ns: argparse.Namespace):
 
 
 def main():
-    sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(line_buffering=True)
     settings = load_settings()
     p = build_parser(settings.run_kind)
-    ns = p.parse_args()
+    ns = p.parse_args(namespace=Namespace())
     if ns.command == "check":
         return live_check(settings)
     args = to_args(p, ns)

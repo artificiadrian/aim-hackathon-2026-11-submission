@@ -42,7 +42,7 @@ def live_check(settings: Settings):
     rec = Recorder(events=EventLog(run_dir=run_dir, secrets=settings.secrets))
     arena = ArenaClient.connect(settings)
     llm = OpenRouterClient.connect(settings, CostTracker())
-    results = []
+    results: list[bool] = []
 
     meta = git_meta().model_copy(update={"note": "live check: one tool call, no submits"})
     run = arena.start_run(rec, "dev", None, meta)

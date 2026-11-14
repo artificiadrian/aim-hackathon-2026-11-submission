@@ -15,13 +15,13 @@ from mcnulty.agent.submit import FALLBACK
 from mcnulty.clients.arena import MAX_NOTE, ArenaClient, ArenaError, RunKind, Task, git_meta
 from mcnulty.clients.openrouter import BudgetExhausted, CostTracker, OpenRouterClient
 from mcnulty.commands.task_filter import TaskFilter
-from mcnulty.frozen import Frozen
+from mcnulty.frozen import FromText
 from mcnulty.record.events import CliStarted, RunFinished, TaskCrashed, TaskFinished
 from mcnulty.record.log import EventLog, Recorder
 from mcnulty.settings import Settings
 
 
-class RunArgs(Frozen):
+class RunArgs(FromText):
     kind: RunKind
     note: str | None = Field(default=None, max_length=MAX_NOTE)
     seed: int | None = None
@@ -50,10 +50,8 @@ def run_tasks(settings: Settings, args: RunArgs):
     done = {t.task_id for t in arena.run_status(rec, run.run_id).tasks if t.submitted}
     tasks = [t for t in args.only.select(run.tasks) if t.task_id not in done]
     note = f", note: {args.note}" if args.note else ""
-    print(
-        f"run {run.run_id} ({run.kind}, theme={run.theme}, seed={run.seed}), {len(tasks)} tasks, "
-        f"{len(done)} already submitted, dir={run_dir}{note}"
-    )
+    head = f"run {run.run_id} ({run.kind}, theme={run.theme}, seed={run.seed})"
+    print(f"{head}, {len(tasks)} tasks, {len(done)} already submitted, dir={run_dir}{note}")
     manifest = arena.run_manifest(rec, run.run_id)
     (run_dir / "manifest.json").write_text(manifest.model_dump_json(indent=1), encoding="utf-8")
     manifest_files = {t.task_id: t.files for t in manifest.tasks}

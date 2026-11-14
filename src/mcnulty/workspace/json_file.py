@@ -1,11 +1,10 @@
 """A JSON document: the parsed value plus its text lines (cited by path, or by line)."""
 
-import json
 from typing import Literal
 
 from pydantic import JsonValue
 
-from mcnulty.frozen import Frozen
+from mcnulty.frozen import JSON, Frozen
 from mcnulty.workspace.text_file import TextLine, text_lines
 
 
@@ -17,4 +16,4 @@ class JsonFile(Frozen):
 
 
 def parse_json(path: str, data: bytes):
-    return JsonFile(path=path, lines=text_lines(path, data), value=json.loads(data))
+    return JsonFile(path=path, lines=text_lines(path, data), value=JSON.validate_json(data))

@@ -1,5 +1,7 @@
 """The hard spend cap stops model calls before any request is sent."""
 
+from pathlib import Path
+
 import httpx
 import pytest
 
@@ -7,7 +9,7 @@ from mcnulty.clients.openrouter import BudgetExhausted, CostTracker, OpenRouterC
 from mcnulty.record.log import EventLog, Recorder
 
 
-def test_spend_cap_blocks_the_next_call(tmp_path):
+def test_spend_cap_blocks_the_next_call(tmp_path: Path):
     sent: list[httpx.Request] = []
     http = httpx.Client(transport=httpx.MockTransport(lambda r: sent.append(r) or httpx.Response(500)))
     tracker = CostTracker(cap=0.01)

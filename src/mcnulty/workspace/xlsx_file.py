@@ -18,7 +18,7 @@ def parse_xlsx(path: str, data: bytes):
         # Harmless: the generated workbooks have no style sheet and openpyxl applies its default.
         warnings.filterwarnings("ignore", message="Workbook contains no default style", category=UserWarning)
         book = openpyxl.load_workbook(io.BytesIO(data), data_only=True)  # data_only: formula results, not formulas
-    tables = []
+    tables: list[Table] = []
     for sheet in book.worksheets:
         rows = tuple(
             TableRow(

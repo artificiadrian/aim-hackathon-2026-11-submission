@@ -4,10 +4,10 @@ import re
 from typing import Literal
 
 from mcnulty.clients.arena import Task
-from mcnulty.frozen import Frozen
+from mcnulty.frozen import FromText
 
 
-class TaskFilter(Frozen):
+class TaskFilter(FromText):
     """--tasks, --level, --match and --limit, applied in that order."""
 
     tasks: tuple[str, ...] = ()

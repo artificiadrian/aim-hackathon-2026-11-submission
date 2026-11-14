@@ -49,7 +49,10 @@ ban-relative-imports = "all"
 "__future__.annotations".msg = "Write annotations without it."
 
 [tool.basedpyright]
-typeCheckingMode = "standard"
+typeCheckingMode = "recommended"
+# Calls made for their effect (write, mkdir, add_argument, subprocess.run with check=True) are the norm here; an
+# `_ =` before each adds noise and catches no type mistake.
+reportUnusedCallResult = false
 reportImplicitOverride = "error"
 reportMatchNotExhaustive = "error"
 include = ["src", "tests"]

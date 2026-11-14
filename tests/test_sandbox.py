@@ -78,7 +78,9 @@ def test_catches_writes_outside_scratch(box: TaskSandbox, rec: Recorder, code: s
     assert "PermissionError" in result.stderr
 
 
-def test_catches_no_keys_no_host_files_and_second_user(box: TaskSandbox, rec: Recorder, monkeypatch):
+def test_catches_no_keys_no_host_files_and_second_user(
+    box: TaskSandbox, rec: Recorder, monkeypatch: pytest.MonkeyPatch
+):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-must-not-leak")
     paths = "'/app', '/proc/1', '/usr/local/bin/uv', '/sandbox'"
     code = f"import os; print(os.getuid(), sorted(os.environ), [os.path.exists(p) for p in ({paths})])"

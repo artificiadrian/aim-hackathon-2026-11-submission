@@ -22,13 +22,8 @@ class PdfFile(Frozen):
 
 
 def image_count(page: pypdf.PageObject):
-    resources = page.get("/Resources")
-    if resources is None:
-        return 0
-    xobjects = resources.get_object().get("/XObject")
-    if xobjects is None:
-        return 0
-    return sum(1 for x in xobjects.get_object().values() if x.get_object().get("/Subtype") == "/Image")
+    """Images placed on the page (pypdf's documented ``page.images``; not decoded here)."""
+    return len(page.images)
 
 
 def parse_pdf(path: str, data: bytes):

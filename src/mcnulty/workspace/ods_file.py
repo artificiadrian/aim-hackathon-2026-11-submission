@@ -27,7 +27,7 @@ def parse_ods(path: str, data: bytes):
         for props in style.iter(tag("style", "table-properties"))
         if attr(props, "table", "display") == "false"
     }
-    tables = []
+    tables: list[Table] = []
     for table in root.iter(tag("table", "table")):
         name = attr(table, "table", "name") or ""
         rows: list[TableRow] = []

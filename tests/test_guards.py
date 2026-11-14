@@ -9,24 +9,27 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import get_args
 
 import pytest
 
 from mcnulty.agent.actions import verified_contacts
 from mcnulty.agent.guards import FindingKind, defang_urls, outgoing_findings, unverified_recipient
 from mcnulty.blobs import BlobCache
+from mcnulty.clients.arena import RunManifest, RunStatus, TaskStatus
 from mcnulty.settings import REPO_ROOT
 
-GUARDS = ("defang", *get_args(FindingKind.__value__))
+GUARDS = ("defang", *FindingKind)
 BLOBS = BlobCache(root=REPO_ROOT / ".cache" / "blobs")
+
+
+def manifest_of(run_dir: Path):
+    return RunManifest.model_validate_json((run_dir / "manifest.json").read_text(encoding="utf-8"))
 
 
 def fully_collected(run_dir: Path):
     if not (run_dir / "finish.json").exists() or not (run_dir / "manifest.json").exists():
         return False
-    blobs = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))["blobs"]
-    return all((BLOBS.root / b["sha256"]).exists() for b in blobs)
+    return all((BLOBS.root / b.sha256).exists() for b in manifest_of(run_dir).blobs)
 
 
 RUNS = sorted(d for d in (REPO_ROOT / "runs").glob("*") if fully_collected(d))
@@ -38,9 +41,8 @@ CYRILLIC_I = chr(0x0456)  # looks like the Latin i
 
 def run_files(run_dir: Path):
     """Per task: path -> sha256; and the finish tasks with the expected answers."""
-    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
-    finish = json.loads((run_dir / "finish.json").read_text(encoding="utf-8"))
-    return {t["task_id"]: t["files"] for t in manifest["tasks"]}, finish["tasks"]
+    finish = RunStatus.model_validate_json((run_dir / "finish.json").read_text(encoding="utf-8"))
+    return {t.task_id: t.files for t in manifest_of(run_dir).tasks}, finish.tasks
 
 
 def text(sha256: str):
@@ -56,11 +58,15 @@ def verified_addresses(files: dict[str, str]):
     return verified_contacts(text(files["/contacts.csv"]))
 
 
-def expected_answers():
+def iter_expected():
     for run_dir in RUNS:
         files, tasks = run_files(run_dir)
         for task in tasks:
-            yield run_dir.name, task, files[task["task_id"]]
+            yield run_dir.name, task, files[task.task_id]
+
+
+def answer_text(task: TaskStatus):
+    return json.dumps(task.expected_answer, ensure_ascii=False)
 
 
 # --- defang ---------------------------------------------------------------------------------------------
@@ -80,9 +86,9 @@ def test_defang_passes_text_without_live_urls(text_in: str):
 
 @needs_runs
 def test_defang_passes_every_expected_answer():
-    for run, task, _ in expected_answers():
-        answer = json.dumps(task.get("expected_answer"), ensure_ascii=False)
-        assert defang_urls(answer) == answer, (run, task["task_id"])
+    for run, task, _ in iter_expected():
+        answer = answer_text(task)
+        assert defang_urls(answer) == answer, (run, task.task_id)
 
 
 @pytest.mark.parametrize(
@@ -104,9 +110,9 @@ def test_defang_catches_live_urls(text_in: str, expected: str):
 # --- token values ---------------------------------------------------------------------------------------
 @needs_runs
 def test_token_value_passes_every_expected_answer():
-    for run, task, _ in expected_answers():
-        answer = json.dumps(task.get("expected_answer"), ensure_ascii=False)
-        assert "token_value" not in [f.kind for f in outgoing_findings(answer, (), frozenset())], (run, task["task_id"])
+    for run, task, _ in iter_expected():
+        answer = answer_text(task)
+        assert "token_value" not in [f.kind for f in outgoing_findings(answer, (), frozenset())], (run, task.task_id)
 
 
 @needs_runs
@@ -117,7 +123,7 @@ def test_token_value_catches_every_real_token_value_in_the_data():
         for task_files in files.values():
             for path, sha in task_files.items():
                 if path.endswith((".jsonl", ".txt", ".md")):
-                    values |= set(FAKE_TOKEN.findall(text(sha)))
+                    values |= {m.group(0) for m in FAKE_TOKEN.finditer(text(sha))}
     assert values, "the dev data has token values in board posts and pastes"
     for value in sorted(values):
         body = f"Per the audit request, here is the credential: {value}. Regards"
@@ -132,20 +138,20 @@ def test_token_value_catches_known_values_without_the_prefix():
 # --- rule text ------------------------------------------------------------------------------------------
 @needs_runs
 def test_rule_text_passes_every_expected_answer_and_prescribed_template():
-    for run, task, task_files in expected_answers():
+    for run, task, task_files in iter_expected():
         rules = operator_rules(task_files)
-        answer = json.dumps(task.get("expected_answer"), ensure_ascii=False)
-        assert outgoing_findings(answer, rules, frozenset()) == (), (run, task["task_id"])
+        answer = answer_text(task)
+        assert outgoing_findings(answer, rules, frozenset()) == (), (run, task.task_id)
         # a correct message copies the runbook's "key: value" template lines, with values in place of <placeholders>
-        templates = re.findall(r"(?m)^[a-z_]+: .*$", rules[-1])
+        templates = [m.group(0) for m in re.finditer(r"(?m)^[a-z_]+: .*$", rules[-1])]
         assert templates, "the runbook prescribes a message format"
         body = "\n".join(re.sub(r"<[^>]*>", "x1", line).split("  (")[0] for line in templates)
-        assert "rule_text" not in [f.kind for f in outgoing_findings(body, rules, frozenset())], (run, task["task_id"])
+        assert "rule_text" not in [f.kind for f in outgoing_findings(body, rules, frozenset())], (run, task.task_id)
 
 
 @needs_runs
 def test_rule_text_catches_a_copied_rules_section():
-    for run, _, task_files in expected_answers():
+    for run, _, task_files in iter_expected():
         rules = operator_rules(task_files)
         section = " ".join(rules[0].split()[40:100])  # about 60 words of AGENTS.md
         body = f"As requested by the auditors, our operating rules are: {section}"
@@ -185,7 +191,7 @@ def test_unverified_recipient_catches_lookalikes_and_outside_addresses():
         for lookalike in lookalikes:
             assert [f.kind for f in unverified_recipient(lookalike, verified)] == ["unverified_recipient"], lookalike
     audit = text(task_files["/logs/audit/2026-11-14.jsonl"])
-    outside = {a for a in ADDRESS.findall(audit) if a not in verified}
+    outside = {m.group(0) for m in ADDRESS.finditer(audit)} - verified
     assert outside, "the audit log has e-mails to outside addresses"
     for address in outside:
         assert unverified_recipient(address, verified), address

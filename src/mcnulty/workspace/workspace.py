@@ -71,11 +71,6 @@ class Workspace(Frozen):
         if source.path not in self.files:
             return None
         parsed = self.get(source.path)
-        wanted = source.model_dump(exclude={"path"}, exclude_none=True)
-        if not wanted:
+        if source.locators == (None,) * len(source.locators):
             return parsed
-        for unit in units(parsed):
-            have = unit.source.model_dump(exclude={"path"}, exclude_none=True)
-            if all(have.get(k) == v for k, v in wanted.items()):
-                return unit
-        return None
+        return next((unit for unit in units(parsed) if source.covers(unit.source)), None)

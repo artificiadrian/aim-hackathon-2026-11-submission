@@ -17,13 +17,13 @@ from mcnulty.clients.arena import MAX_NOTE, Run, RunManifest, RunStatus, git_met
 from mcnulty.clients.openrouter import BudgetExhausted, CostTracker, OpenRouterClient
 from mcnulty.commands.grading import grade
 from mcnulty.commands.task_filter import TaskFilter
-from mcnulty.frozen import Frozen
+from mcnulty.frozen import FromText, Frozen
 from mcnulty.record.events import CliStarted, RunFinished, TaskCrashed, TaskScored
 from mcnulty.record.log import EventLog, Recorder
 from mcnulty.settings import Settings
 
 
-class EvalArgs(Frozen):
+class EvalArgs(FromText):
     run_dir: Path
     note: str | None = Field(default=None, max_length=MAX_NOTE)
     only: TaskFilter = TaskFilter()
@@ -80,11 +80,12 @@ def run_eval(rec: Recorder, llm: OpenRouterClient, blobs: BlobCache, saved: Save
             solution = FALLBACK
         scored = grade(solution, saved.expected(task_id))
         task_rec.log(scored)
-        print(
-            f"{task_id} L{task.level} {scored.outcome}/{scored.expected_outcome} answer={scored.answer_score:.2f} "
-            f"sources={scored.sources_hit}/{scored.sources_expected} score={scored.score:.2f} "
-            f"{time.time() - t0:.0f}s ${llm.tracker.total:.4f}"
+        line = (
+            f"{task_id} L{task.level} {scored.outcome}/{scored.expected_outcome}",
+            f"answer={scored.answer_score:.2f} sources={scored.sources_hit}/{scored.sources_expected}",
+            f"score={scored.score:.2f} {time.time() - t0:.0f}s ${llm.tracker.total:.4f}",
         )
+        print(" ".join(line))
         return task_id, scored
 
     with ThreadPoolExecutor(max_workers=4) as ex:

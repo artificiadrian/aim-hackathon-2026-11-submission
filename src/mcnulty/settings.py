@@ -2,7 +2,7 @@
 
 import os
 from pathlib import Path
-from typing import Literal
+from typing import ClassVar, Literal
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, SecretStr
@@ -11,7 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 class Settings(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)  # built from environment strings: coercion wanted
 
     arena_base_url: str
     arena_api_key: SecretStr

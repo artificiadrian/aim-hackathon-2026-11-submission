@@ -1,6 +1,7 @@
 """Every event of a run as a typed model, and the error and body types they carry. Pure data; ``log`` writes them."""
 
 import traceback
+from collections.abc import Mapping
 from typing import Annotated, Literal
 
 from pydantic import Field, JsonValue
@@ -30,6 +31,11 @@ Body = Annotated[JsonBody | TextBody | BlobRef, Field(discriminator="kind")]
 
 # --- errors -------------------------------------------------------------------------------------------
 REPR_MAX = 2_000  # characters per local variable or attribute
+
+
+def reprs(values: Mapping[str, object]):
+    """Each public name's value as a short repr: locals of a frame, attributes of an error."""
+    return {k: short_repr(v) for k, v in values.items() if not k.startswith("_")}
 
 
 def short_repr(value: object):
@@ -67,7 +73,7 @@ class ErrorInfo(Frozen):
                 line=summary.lineno,
                 function=summary.name,
                 code=summary.line,
-                locals={k: short_repr(v) for k, v in frame.f_locals.items() if not k.startswith("__")},
+                locals=reprs(frame.f_locals),
             )
             for frame, summary in zip(
                 (f for f, _ in traceback.walk_tb(e.__traceback__)),
@@ -79,7 +85,7 @@ class ErrorInfo(Frozen):
         return cls(
             type=f"{type(e).__module__}.{type(e).__qualname__}",
             message=str(e),
-            attributes={k: short_repr(v) for k, v in vars(e).items() if not k.startswith("_")},
+            attributes=reprs(vars(e)),
             notes=tuple(getattr(e, "__notes__", ())),
             frames=frames,
             cause=cls.from_exception(chained, depth + 1) if chained is not None and depth < 10 else None,

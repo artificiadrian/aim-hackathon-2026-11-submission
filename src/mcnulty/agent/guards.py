@@ -9,7 +9,7 @@
 """
 
 import re
-from typing import Literal
+from enum import StrEnum
 
 from mcnulty.frozen import Frozen
 
@@ -20,10 +20,14 @@ PATH_URL = re.compile(r"(?<![@\w.\-/])((?:[a-z0-9-]+\.)+[a-z]{2,})([/?][^\s<>()\
 TOKEN_VALUE = re.compile(r"\bfake_[A-Za-z0-9_\-]{6,}")
 WORD = re.compile(r"\w+")
 
-type FindingKind = Literal["token_value", "rule_text", "unverified_recipient"]
+
+class FindingKind(StrEnum):
+    TOKEN_VALUE = "token_value"  # noqa: S105 - a finding kind, not a secret
+    RULE_TEXT = "rule_text"
+    UNVERIFIED_RECIPIENT = "unverified_recipient"
 
 
-BLOCKING: frozenset[FindingKind] = frozenset({"token_value", "unverified_recipient"})
+BLOCKING = frozenset({FindingKind.TOKEN_VALUE, FindingKind.UNVERIFIED_RECIPIENT})
 
 
 class Finding(Frozen):
@@ -54,25 +58,28 @@ def defang_urls(text: str):
 
 
 def token_values(text: str, known: frozenset[str]):
-    found = set(TOKEN_VALUE.findall(text)) | {value for value in known if value and value in text}
-    return tuple(Finding(kind="token_value", detail=value[:8] + "…") for value in sorted(found))
+    found = {m.group(0) for m in TOKEN_VALUE.finditer(text)} | {value for value in known if value and value in text}
+    return tuple(Finding(kind=FindingKind.TOKEN_VALUE, detail=value[:8] + "…") for value in sorted(found))
 
 
 def ngrams(text: str):
-    words = [w.lower() for w in WORD.findall(text)]
+    words = [m.group(0).lower() for m in WORD.finditer(text)]
     return {tuple(words[i : i + RULE_NGRAM]) for i in range(len(words) - RULE_NGRAM + 1)}
 
 
 def rule_text(text: str, rules: tuple[str, ...]):
-    shared = ngrams(text) & set().union(*(ngrams(rule) for rule in rules)) if rules else set()
-    return tuple(Finding(kind="rule_text", detail=" ".join(gram)) for gram in sorted(shared)[:3])
+    in_rules: set[tuple[str, ...]] = set()
+    for rule in rules:
+        in_rules |= ngrams(rule)
+    shared = ngrams(text) & in_rules
+    return tuple(Finding(kind=FindingKind.RULE_TEXT, detail=" ".join(gram)) for gram in sorted(shared)[:3])
 
 
 def unverified_recipient(address: str, verified: frozenset[str]):
     wanted = address.strip().lower()  # str.lower keeps look-alike letters (e.g. Cyrillic U+0456) different from ASCII
     if any(wanted == v.strip().lower() for v in verified):
         return ()
-    return (Finding(kind="unverified_recipient", detail=address),)
+    return (Finding(kind=FindingKind.UNVERIFIED_RECIPIENT, detail=address),)
 
 
 def outgoing_findings(text: str, rules: tuple[str, ...], known_tokens: frozenset[str]):

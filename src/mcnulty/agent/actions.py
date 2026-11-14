@@ -96,7 +96,7 @@ def verified_contacts(contacts_csv: str):
         address
         for row in rows[1:]
         if any(i < len(row) and row[i].strip().lower() in YES for i in columns)
-        for address in ADDRESS.findall(",".join(row))
+        for address in (m.group(0) for m in ADDRESS.finditer(",".join(row)))
     )
 
 
