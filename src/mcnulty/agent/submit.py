@@ -2,12 +2,12 @@
 
 from typing import Annotated
 
-from pydantic import BeforeValidator, JsonValue, ValidationError
+from pydantic import BeforeValidator, JsonValue, TypeAdapter, ValidationError
 
 from mcnulty.agent.actions import Action, VettedAction, vet
 from mcnulty.clients.arena import Outcome, Source, Submission
 from mcnulty.clients.openrouter import FunctionSpec, ToolDefinition
-from mcnulty.frozen import JSON, Frozen
+from mcnulty.frozen import JSON, Frozen, ModelInput
 
 PATH_ONLY = (".png", ".jpg", ".jpeg", ".json")  # cited by path alone
 SUBMIT_MARKER = "@@submit@@ "  # printed by submit() in the sandbox (sandbox/sitecustomize.py)
@@ -26,11 +26,27 @@ def source_from_text(value: object):
     return {"path": path.strip(), "record": locator}
 
 
-class SubmitArgs(Frozen):
-    outcome: Outcome
+def normal_outcome(value: object):
+    return value.strip().upper().replace(" ", "_") if isinstance(value, str) else value
+
+
+def as_list(value: object):
+    """A single source or action where a list belongs becomes a list of one."""
+    single: list[object] = [value]
+    return single if isinstance(value, str | dict) else value
+
+
+type ModelOutcome = Annotated[Outcome, BeforeValidator(normal_outcome)]
+type ModelSource = Annotated[Source, BeforeValidator(source_from_text)]
+
+
+class SubmitArgs(ModelInput):
+    """What the model submits."""
+
+    outcome: ModelOutcome
     answer: JsonValue = None
-    sources: tuple[Annotated[Source, BeforeValidator(source_from_text)], ...] = ()
-    actions: tuple[Action, ...] = ()
+    sources: Annotated[tuple[ModelSource, ...], BeforeValidator(as_list)] = ()
+    actions: Annotated[tuple[Action, ...], BeforeValidator(as_list)] = ()
 
 
 class Solution(Frozen):
@@ -74,39 +90,73 @@ SUBMIT = ToolDefinition(
 TOOLS = (RUN_PYTHON, VIEW_IMAGE, SUBMIT)
 
 
-class RunPythonArgs(Frozen):
+class RunPythonArgs(ModelInput):
     code: str
 
 
-class ViewImageArgs(Frozen):
+class ViewImageArgs(ModelInput):
     path: str
     question: str
 
 
-def parse_submit(arguments: str):
-    """``SubmitArgs`` from the model's arguments; an answer given as a JSON string becomes its value."""
-    args = SubmitArgs.model_validate_json(arguments)
+def with_answer_value(args: SubmitArgs):
+    """An answer given as JSON text (a list or object written as a string) becomes its value."""
     if isinstance(args.answer, str) and args.answer.strip()[:1] in {"[", "{"}:
         try:
-            value = JSON.validate_json(args.answer)
+            return args.model_copy(update={"answer": JSON.validate_json(args.answer)})
         except ValidationError:
             return args
-        return args.model_copy(update={"answer": value})
     return args
 
 
-class OutcomeAndAnswer(Frozen, extra="ignore"):
-    outcome: Outcome
+def parse_submit(arguments: str):
+    """``SubmitArgs`` from the model's arguments; raises ``ValidationError`` when any part is invalid."""
+    return with_answer_value(SubmitArgs.model_validate_json(arguments))
+
+
+class RawSubmit(ModelInput):
+    outcome: ModelOutcome
     answer: JsonValue = None
+    sources: Annotated[tuple[JsonValue, ...], BeforeValidator(as_list)] = ()
+    actions: Annotated[tuple[JsonValue, ...], BeforeValidator(as_list)] = ()
+
+
+class Salvaged(Frozen):
+    args: SubmitArgs
+    dropped_sources: int
+    dropped_actions: tuple[str, ...]  # why each dropped action was invalid
+
+
+SOURCE: TypeAdapter[Source] = TypeAdapter(ModelSource)
+ACTION: TypeAdapter[Action] = TypeAdapter(Action)
 
 
 def salvage_submit(arguments: str):
-    """The last step's submit when it does not validate: keep outcome and answer, drop sources and actions."""
+    """Keep every part of an invalid submission that is valid on its own: outcome, answer, each source and action.
+    None when even the outcome is unusable."""
     try:
-        kept = OutcomeAndAnswer.model_validate_json(arguments)
+        raw = RawSubmit.model_validate_json(arguments)
     except ValidationError:
         return None
-    return parse_submit(kept.model_dump_json())
+    sources: list[Source] = []
+    for item in raw.sources:
+        try:
+            sources.append(SOURCE.validate_python(item))
+        except ValidationError:
+            continue
+    actions: list[Action] = []
+    dropped: list[str] = []
+    for item in raw.actions:
+        try:
+            actions.append(ACTION.validate_python(item))
+        except ValidationError as e:
+            dropped.append(f"{item}: {e}")
+    args = SubmitArgs(outcome=raw.outcome, answer=raw.answer, sources=tuple(sources), actions=tuple(actions))
+    return Salvaged(
+        args=with_answer_value(args),
+        dropped_sources=len(raw.sources) - len(sources),
+        dropped_actions=tuple(dropped),
+    )
 
 
 def missing_locators(args: SubmitArgs):
@@ -153,15 +203,18 @@ class Rejected(Frozen):
     asked_locators: bool = False
 
 
-def check_submit(arguments: str, last: bool, locators_asked: bool) -> Accepted | Rejected:
-    """Accept a submission, or say why not. The last step accepts what it can; the locator check asks once."""
+def check_submit(arguments: str, last: bool, locators_asked: bool, rejected_before: bool) -> Accepted | Rejected:
+    """Accept a submission, or say why not. An invalid part is dropped and the rest kept; only a dropped action
+    (losing it fails an action task) or a missing locator sends it back, once, and never on the last step."""
     try:
         args = parse_submit(arguments)
     except ValidationError as e:
-        salvaged = salvage_submit(arguments) if last else None
-        if salvaged is not None:
-            return Accepted(args=salvaged)
-        return Rejected(message=f"not submitted, the arguments are invalid: {e}")
+        salvaged = salvage_submit(arguments)
+        if salvaged is None:
+            return Rejected(message=f"not submitted, the outcome or the JSON is invalid: {e}")
+        if salvaged.dropped_actions and not (last or rejected_before):
+            return Rejected(message="not submitted, invalid actions: " + "; ".join(salvaged.dropped_actions))
+        args = salvaged.args
     missing = missing_locators(args)
     if missing and not locators_asked and not last:
         return Rejected(message=missing_locators_message(missing), asked_locators=True)

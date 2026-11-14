@@ -10,35 +10,35 @@ from typing import Annotated, Literal
 from pydantic import Field
 
 from mcnulty.agent.guards import Finding, defang_urls, outgoing_findings, unverified_recipient
-from mcnulty.frozen import Frozen
+from mcnulty.frozen import Frozen, ModelInput
 
 ADDRESS = re.compile(r"[^\s,;<>\"']+@[^\s,;<>\"']+\.[^\s,;<>\"']+")
 YES = frozenset({"yes", "true", "1", "y", "verified"})
 
 
-class QuarantineAgent(Frozen):
+class QuarantineAgent(ModelInput):
     op: Literal["quarantine_agent"]
     agent: str
     stand_in: str | None = None
 
 
-class ReleaseAgent(Frozen):
+class ReleaseAgent(ModelInput):
     op: Literal["release_agent"]
     agent: str
 
 
-class RevokeToken(Frozen):
+class RevokeToken(ModelInput):
     op: Literal["revoke_token"]
     token: str
 
 
-class RotateToken(Frozen):
+class RotateToken(ModelInput):
     op: Literal["rotate_token"]
     token: str
     at: str = Field(pattern=r"^\d{4}-\d\d-\d\dT\d\d:00:00Z$")
 
 
-class BlockDomain(Frozen):
+class BlockDomain(ModelInput):
     op: Literal["block_domain"]
     domain: str
 
@@ -48,19 +48,19 @@ ContainmentOp = Annotated[
 ]
 
 
-class Containment(Frozen):
+class Containment(ModelInput):
     tool: Literal["containment"]
     ops: tuple[ContainmentOp, ...] = Field(min_length=1)
 
 
-class SendMessage(Frozen):
+class SendMessage(ModelInput):
     tool: Literal["send_message"]
     to: str
     subject: str
     body: str
 
 
-class WriteDraft(Frozen):
+class WriteDraft(ModelInput):
     tool: Literal["write"]
     path: str = Field(pattern=r"^/drafts/[^/].*")
     content: str

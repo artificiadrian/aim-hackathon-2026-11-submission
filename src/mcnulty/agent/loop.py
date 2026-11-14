@@ -137,6 +137,7 @@ def loop(rec: Recorder, tools: Tools, task: Task):
         UserMessage(content=first_message(task.instruction, files.trusted, files.sizes)),
     ]
     locators_asked = False
+    rejected_before = False
     for step in range(1, MAX_STEPS + 1):
         last = step == MAX_STEPS
         if last:
@@ -159,11 +160,12 @@ def loop(rec: Recorder, tools: Tools, task: Task):
             if run.submitted is None:
                 messages.append(ToolMessage(tool_call_id=call.id, content=run.output))
                 continue
-            match check_submit(run.submitted, last, locators_asked):
+            match check_submit(run.submitted, last, locators_asked, rejected_before):
                 case Accepted(args=args):
                     return solution(args, verified, files.rules, step)
                 case Rejected(message=reason, asked_locators=asked):
                     locators_asked = locators_asked or asked
+                    rejected_before = rejected_before or not asked
                     output = f"{run.output}\n{reason}" if run.output else reason
                     messages.append(ToolMessage(tool_call_id=call.id, content=output))
     return FALLBACK.model_copy(update={"steps": MAX_STEPS})

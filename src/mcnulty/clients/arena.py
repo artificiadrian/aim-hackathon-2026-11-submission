@@ -11,7 +11,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from mcnulty.blobs import BlobCache
-from mcnulty.frozen import Frozen
+from mcnulty.frozen import Frozen, ModelInput
 from mcnulty.record.events import ErrorInfo, HttpExchange, HttpFailed
 from mcnulty.record.log import Recorder
 from mcnulty.settings import REPO_ROOT, Settings
@@ -58,8 +58,9 @@ class ToolList(Open):
     tools: tuple[ToolSpec, ...] = ()
 
 
-class Source(Frozen):
-    """A citation: the path plus the most specific locator for the file type (see docs/ARENA_DOCS.md)."""
+class Source(ModelInput):
+    """A citation: the path plus the most specific locator for the file type (see docs/ARENA_DOCS.md). Lenient:
+    citations come from model output ("line": "24" means 24)."""
 
     path: str
     page: int | None = None

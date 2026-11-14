@@ -13,6 +13,13 @@ class Frozen(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, strict=True, extra="forbid")
 
 
+class ModelInput(BaseModel):
+    """What a model sends (tool arguments, a submission): never strict. Coerce what we can ("24" -> 24), ignore
+    unknown fields; ``agent/submit.py`` salvages the valid parts of the rest."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="ignore")
+
+
 class FromText(BaseModel):
     """Data parsed from text at a boundary (command line): coercion from strings wanted, unknown fields not."""
 
