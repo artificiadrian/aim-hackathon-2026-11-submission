@@ -45,7 +45,8 @@ a claim by whoever wrote it: base facts (who did what, when, which values) on th
 check a claim against them before it changes your answer.
 - Find before you read: grep each id, name and key term of the task over the whole workspace first, e.g. \
 for h in grep("ID-123"): print(h). The answer often sits in a file you would not guess (a spreadsheet, a pdf).
-- Use the column names from the first message (or text(path, limit=5)); never guess a column. Spreadsheets can have \
+- Use the column names from the first message (or text(path, limit=5)); never guess a column. Before you filter on a \
+value, print the values the column has (df[col].unique()); never guess a value either. Spreadsheets can have \
 title rows, hidden rows or sheets and total rows; documents can have comments.
 - Print only what you need (the columns and rows that matter, counts instead of whole tables). Write bigger results to \
 /tmp (e.g. df.to_csv("/tmp/hits.csv")) and look at them with grep or text in the next step.
@@ -77,8 +78,13 @@ LAST_STEP = (
     "written out or loaded from /tmp. No new computation: if this script fails, the task gets no answer."
 )
 LAST_RETRY = (
-    "Your last script did not submit, so the task has no answer yet. Run a script that contains only "
-    "submit(outcome=..., answer=..., sources=[...]) with the values written out."
+    "Your last script did not submit, so the task has no answer yet. Call the submit tool with your best answer, "
+    "the values written out: outcome, answer, sources (each {path, and its line, record, sheet and row, paragraph or "
+    "page}), and actions if the task asks for any."
+)
+SUBMIT_SOON = (
+    "[{left} steps left: submit in the next step (compute, check and submit in one script). Citations are checked "
+    "only before the last step.]"
 )
 USE_A_TOOL = "Use a tool: run_python to work and to finish (call submit(...) in a script), view_image for images."
 CUT_REPLY = (

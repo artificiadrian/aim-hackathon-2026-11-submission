@@ -5,7 +5,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from ws.formats import CACHE, JSON, read_text, units
+from ws.formats import CACHE, JSON, read_text, units, visible
 from ws.models import Hit, Source, Unit
 
 SKIPPED = frozenset({"bin", "sbin", "lib", "lib32", "lib64", "libx32", "usr", "etc", "tmp", "proc", "dev"})
@@ -23,7 +23,7 @@ def resolve(source: Source):
 def read(source: Source):
     """The text of the unit a citation points at; None when the file has no such unit (or the file is missing)."""
     if not source.locators:
-        return read_text(source.path) if Path(source.path).is_file() else None
+        return visible(read_text(source.path)) if Path(source.path).is_file() else None
     try:
         found = units(source.path)
     except OSError:

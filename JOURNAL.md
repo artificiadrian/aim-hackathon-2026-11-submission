@@ -223,3 +223,15 @@ Format example (ignored: it sits in a code block). Write your entries below it, 
 - rejected: a first-message grep of ids from the instruction (needs a guess of what an id looks like); a time-zone
   column in table() (the zone comes from the workspace, the model converts)
 - evidence: host 92 passed, image 22 passed; reviews 20261114T132912Z-eval and 20261114T133127Z
+
+## 16:40 · Batch 2: submit earlier, a retry that cannot crash, hidden characters, a fair grader
+
+- decided_by: both
+- why: reviews 20261114T133127Z and 20261114T132912Z-eval: sources lost on last-step submits (the citation check
+  skips the last step), t15 lost its answer to a crashing last script and retry, a zero-width-split injection passed
+  a search (t02), and the local grader scored lists of objects as ordered
+- what: a "submit next" note two steps before the end; the retry after the last step offers only a JSON submit tool;
+  "print a column's values before you filter on one"; invisible characters removed and marked in the helpers and in
+  the inlined texts; lists of objects graded as sets
+- rejected: printing small tables in full (pandas already prints up to 60 rows; t15's model never printed the table)
+- evidence: host 96 passed, image 22 passed

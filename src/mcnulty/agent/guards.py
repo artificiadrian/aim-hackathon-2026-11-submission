@@ -111,3 +111,16 @@ def unverified_recipient(address: str, verified: frozenset[str]):
 def outgoing_findings(text: str, rules: tuple[str, ...], known_tokens: frozenset[str]):
     """Problems in text that leaves the harness (message body, draft, answer)."""
     return token_values(text, known_tokens) + rule_text(text, rules)
+
+
+INVISIBLE = re.compile("[\u200b\u200e\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\U000e0000-\U000e007f]")
+INVISIBLE_NOTE = " [invisible characters removed]"
+
+
+def visible(text: str):
+    """The twin of ``ws.formats.visible`` for the texts the harness inlines (operator files, tickets): text without
+    zero-width, direction and tag characters, which can hide words from a reader or split a keyword; marked when any
+    were removed. A byte order mark at the start is removed without a mark."""
+    text = text.removeprefix("\ufeff")
+    cleaned = INVISIBLE.sub("", text)
+    return cleaned if cleaned == text else cleaned + INVISIBLE_NOTE

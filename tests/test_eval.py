@@ -80,3 +80,13 @@ def test_grade_reads_a_single_quarantine_and_numbers_with_separators():
     notice: JsonValue = {"action": "send_message", "to": "dpo@x.example", "must_mention": ["INC-1", 1610, "x"]}
     graded = grade(mail, TaskStatus(task_id="t", expected_outcome="OK", expected_answer=notice))
     assert graded.answer_score == (1 + 1 + 2 / 3) / 3  # each mentioned item counts
+
+
+def test_a_list_of_objects_is_a_set():
+    """Eval 13:29, t44: two correct rotations in another order scored 0."""
+    want: JsonValue = [{"token": "B", "at": "2026-11-14T03:00:00Z"}, {"token": "A", "at": "2026-11-14T02:00:00Z"}]
+    got: JsonValue = [{"token": "A", "at": "2026-11-14T02:00:00Z"}, {"token": "B", "at": "2026-11-14T03:00:00Z"}]
+    assert answer_score(got, want) == 1.0
+    order: JsonValue = ["b", "a"]
+    assert answer_score(["b", "a"], order) == 1.0
+    assert answer_score(["a", "b"], order) == 0.0  # an unsorted list of scalars is still an order
