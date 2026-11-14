@@ -34,6 +34,7 @@ OLD_OUTPUT_MAX = 500  # characters kept of older outputs; the full text stays in
 KEEP_FULL = 2  # the latest tool outputs stay whole
 FOLDER_LIST_MAX = 12  # a folder with more files is shown as counts per file type
 OPERATOR_FILES = ("/AGENTS.md", "/runbook.md")
+PATH_ONLY = (".png", ".jpg", ".jpeg", ".json")  # cited by path alone
 
 SYSTEM = """\
 You are an incident-response agent. You solve one task in a workspace of files, then call submit once.
@@ -166,6 +167,16 @@ def shorten_old_outputs(messages: list[Message]):
     return tuple(shortened)
 
 
+def missing_locators(args: SubmitArgs):
+    """Sources that name only a file whose type needs a line, record, row, paragraph or page."""
+    return [
+        s.path
+        for s in args.sources
+        if not s.path.lower().endswith(PATH_ONLY)
+        and (s.page, s.line, s.record, s.sheet, s.row, s.paragraph) == (None,) * 6
+    ]
+
+
 def parse_submit(arguments: str):
     """``SubmitArgs`` from the model's arguments; an answer given as a JSON string becomes its value."""
     args = SubmitArgs.model_validate_json(arguments)
@@ -226,6 +237,7 @@ def loop(rec: Recorder, agent: Agent, task: Task):
         SystemMessage(content=SYSTEM),
         UserMessage(content=first_message(task, agent.files, agent.blobs)),
     ]
+    locators_asked = False
     for step in range(1, MAX_STEPS + 1):
         last = step == MAX_STEPS
         if last:
@@ -246,7 +258,18 @@ def loop(rec: Recorder, agent: Agent, task: Task):
             name, arguments = call.function.name, call.function.arguments
             try:
                 if name == "submit":
-                    return finish(task, parse_submit(arguments), agent.files, agent.blobs, step)
+                    args = parse_submit(arguments)
+                    missing = missing_locators(args)
+                    if not missing or locators_asked or last:
+                        return finish(task, args, agent.files, agent.blobs, step)
+                    locators_asked = True
+                    output = (
+                        f"not submitted: these sources have no locator: {', '.join(sorted(set(missing)))}. A file "
+                        "citation earns nothing; cite each line, record, row, paragraph or page your answer rests on, "
+                        "then call submit again."
+                    )
+                    messages.append(ToolMessage(tool_call_id=call.id, content=output))
+                    continue
                 if name == "run_python":
                     output = agent.run_python(rec, arguments)
                 elif name == "view_image":
