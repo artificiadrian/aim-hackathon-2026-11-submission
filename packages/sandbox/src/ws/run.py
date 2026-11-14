@@ -7,18 +7,22 @@ lines match the code) in a namespace that holds the helpers, so no script needs 
 import logging
 import sys
 
-from ws.files import cite, columns, grep, text
+from ws.files import cite, columns, grep, read, text
 from ws.network import block_network
 from ws.shell import sh
 from ws.submit import submit
+from ws.untyped import wide_pandas
 
-HELPERS = {helper.__name__: helper for helper in (submit, text, cite, grep, columns, sh)}
+HELPERS = {helper.__name__: helper for helper in (submit, text, cite, read, grep, columns, sh)}
 
 
 def main():
     block_network()
     logging.getLogger("pypdf").setLevel(logging.ERROR)  # a warning per unmapped font buries the real output
-    code = compile(sys.stdin.read(), "<script>", "exec")
+    source = sys.stdin.read()
+    if "pandas" in source or "pd." in source:
+        wide_pandas()
+    code = compile(source, "<script>", "exec")
     exec(code, {"__name__": "__main__", **HELPERS})  # noqa: S102 - running the model's script is the purpose
 
 

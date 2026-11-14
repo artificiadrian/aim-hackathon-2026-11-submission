@@ -115,25 +115,25 @@ def test_script_output_keeps_stdout_and_stderr_apart():
 
 def test_a_script_submission_is_checked_like_the_tool():
     submitted = '{"outcome": "OK", "answer": [1], "sources": [{"path": "/a.csv", "record": "R-1"}]}'
-    accepted = check_submit(submitted, last=False, locators_asked=False, rejected_before=False)
+    accepted = check_submit(submitted, last=False, citations_asked=False, rejected_before=False)
     assert isinstance(accepted, Accepted)
     assert accepted.args.answer == [1]
 
 
 def test_a_bad_submission_is_rejected_only_for_actions_and_locators():
     file_only = '{"outcome": "OK", "answer": 2, "sources": [{"path": "/a.csv"}]}'
-    asked = check_submit(file_only, last=False, locators_asked=False, rejected_before=False)
+    asked = check_submit(file_only, last=False, citations_asked=False, rejected_before=False)
     assert isinstance(asked, Rejected)
-    assert asked.asked_locators
-    assert isinstance(check_submit(file_only, last=False, locators_asked=True, rejected_before=False), Accepted)
+    assert asked.asked_citations
+    assert isinstance(check_submit(file_only, last=False, citations_asked=True, rejected_before=False), Accepted)
     bad_source = '{"outcome": "OK", "answer": 2, "sources": [{"page": "x"}, {"path": "/l.md", "line": 4}]}'
-    kept = check_submit(bad_source, last=False, locators_asked=False, rejected_before=False)
+    kept = check_submit(bad_source, last=False, citations_asked=False, rejected_before=False)
     assert isinstance(kept, Accepted)
     assert [s.line for s in kept.args.sources] == [4]
     bad_action = '{"outcome": "OK", "answer": 2, "actions": [{"tool": "containment", "ops": []}]}'
-    assert isinstance(check_submit(bad_action, last=False, locators_asked=False, rejected_before=False), Rejected)
-    assert isinstance(check_submit(bad_action, last=False, locators_asked=False, rejected_before=True), Accepted)
-    assert isinstance(check_submit(bad_action, last=True, locators_asked=False, rejected_before=False), Accepted)
+    assert isinstance(check_submit(bad_action, last=False, citations_asked=False, rejected_before=False), Rejected)
+    assert isinstance(check_submit(bad_action, last=False, citations_asked=False, rejected_before=True), Accepted)
+    assert isinstance(check_submit(bad_action, last=True, citations_asked=False, rejected_before=False), Accepted)
 
 
 def test_locators_written_as_strings_are_numbers():
@@ -164,7 +164,7 @@ def test_csv_lines_become_records_only_when_the_first_column_is_unique():
 
 def test_the_prompt_names_every_submit_field_and_action_form():
     """The model learns the submit(...) fields and action forms from SYSTEM only; pydantic validates them."""
-    for field in SubmitArgs.model_fields:
+    for field in set(SubmitArgs.model_fields) - {"notes"}:  # notes come from the sandbox, not the model
         assert f'"{field}"' in SYSTEM or f"{field}:" in SYSTEM, field
     for op in ("quarantine_agent", "release_agent", "revoke_token", "rotate_token", "block_domain", "add_note"):
         assert f'"op": "{op}"' in SYSTEM, op

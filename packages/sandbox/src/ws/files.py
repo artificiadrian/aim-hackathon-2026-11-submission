@@ -4,10 +4,30 @@ import re
 import sys
 from pathlib import Path
 
-from ws.formats import CACHE, units
+from ws.formats import CACHE, read_text, units
 from ws.models import Hit, Source, Unit
 
 SKIPPED = frozenset({"bin", "sbin", "lib", "lib32", "lib64", "libx32", "usr", "etc", "tmp", "proc", "dev"})
+
+
+def resolve(source: Source):
+    """A jsonl line cited by its record id (``id=M-1``) as the line that holds that object: jsonl is graded by line."""
+    if source.record is None or not source.path.endswith(".jsonl") or not Path(source.path).is_file():
+        return source
+    pattern = re.compile(rf'"id"\s*:\s*"?{re.escape(source.record)}"?\s*[,}}]')
+    found = next((u.source for u in units(source.path) if pattern.search(u.text)), None)
+    return found or source
+
+
+def read(source: Source):
+    """The text of the unit a citation points at; None when the file has no such unit (or the file is missing)."""
+    if not source.locators:
+        return read_text(source.path) if Path(source.path).is_file() else None
+    try:
+        found = units(source.path)
+    except OSError:
+        return None
+    return next((u.text for u in found if u.source == source), None)
 
 
 def text(path: str, limit: int | None = 200):
@@ -63,21 +83,27 @@ def files_under(root: Path):
 
 TABLES = (".csv", ".jsonl", ".xlsx", ".xlsm", ".ods")
 COLUMNS_MAX = 240  # characters per header line
+EXAMPLE_MAX = 160  # characters per example row
 
 
 def header(found: list[Unit]):
-    """The header of a table: the first unit with two or more filled cells (title rows have one), per sheet."""
-    seen: dict[str | None, str] = {}
+    """Per sheet: the header (the first unit with two or more filled cells; title rows have one, jsonl: the keys of
+    the first object) and the first data row after it as an example of the values."""
+    headers: dict[str | None, str] = {}
+    examples: dict[str | None, str] = {}
     for unit in found:
         sheet = unit.source.sheet
-        if sheet in seen:
+        if sheet in examples:
             continue
-        if len([c for c in unit.cells if c.strip()]) >= 2:
-            seen[sheet] = f"{unit.source.where}| " + " | ".join(c.strip() for c in unit.cells)
-        elif unit.text.lstrip().startswith("{"):  # jsonl: the keys of the first object
+        if sheet in headers:
+            examples[sheet] = f"  e.g. {unit.text}"[:EXAMPLE_MAX]
+        elif len([c for c in unit.cells if c.strip()]) >= 2:
+            headers[sheet] = f"{unit.source.where}| " + " | ".join(c.strip() for c in unit.cells)
+        elif unit.text.lstrip().startswith("{"):
             keys = re.findall(r'"([^"]+)"\s*:', unit.text)
-            seen[sheet] = f"{unit.source.where}| keys: " + ", ".join(dict.fromkeys(keys))
-    return [line[:COLUMNS_MAX] for line in seen.values()]
+            headers[sheet] = f"{unit.source.where}| keys: " + ", ".join(dict.fromkeys(keys))
+            examples[sheet] = f"  e.g. {unit.text}"[:EXAMPLE_MAX]
+    return [line for sheet, head in headers.items() for line in (head[:COLUMNS_MAX], examples.get(sheet, "")) if line]
 
 
 def columns(*paths: str):

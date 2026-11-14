@@ -6,8 +6,9 @@ from pathlib import Path
 
 import pytest
 import ws.formats
-from ws.files import cite, columns, grep
+from ws.files import cite, columns, grep, read, resolve
 from ws.models import Source as WsSource
+from ws.submit import as_sources, citation_notes
 
 from mcnulty.clients.arena import Source
 
@@ -50,4 +51,45 @@ def test_columns_lists_the_header_of_every_table(files: Path):
     lines = columns(str(files)).splitlines()
     assert f"{files / 'r.csv'} line=1| request_id | actor" in lines
     assert f"{files / 'a.jsonl'} line=1| keys: a" in lines
+    assert f"{files / 'r.csv'}   e.g. RQ-1,ext" in lines
     assert all("n.md" not in line for line in lines)
+
+
+@pytest.mark.parametrize(
+    ("written", "expected"),
+    [
+        ("/a.md#line=9", {"line": 9}),
+        ("/x.xlsx#sheet=alerts&row=58", {"sheet": "alerts", "row": 58}),
+        ("/a.md line=9", {"line": 9}),
+        ("/a.md:line=9", {"line": 9}),
+        ("path=/a.md line=9", {"line": 9}),
+        ("/a.md:49", {"line": 49}),
+        ("/a.csv:R-7 (the request)", {"record": "R-7"}),
+        ("/b.jsonl id=M-4794", {"record": "M-4794"}),
+        ("/scan.png", {}),
+    ],
+)
+def test_a_citation_written_as_text_parses_back(written: str, expected: dict[str, object]):
+    """The model copies what the helpers print; every form it writes must parse (eval 13:12: line=9 became a record)."""
+    source = WsSource.parse(written)
+    assert source is not None
+    assert source.locators == expected
+    assert WsSource.parse(str(source)) == source
+
+
+def test_submit_checks_citations_against_the_files(files: Path):
+    hits = grep("devops-07", str(files / "a.jsonl"))
+    cited, notes = as_sources([hits, f"{files / 'x.json'} id=X-2", str(files / "n.md") + "#line=99", 42])
+    assert [str(s) for s in cited[:2]] == [f"{files / 'a.jsonl'}#line=2", f"{files / 'x.json'}#record=X-2"]
+    assert notes == ["not a citation: 42"]
+    problems = citation_notes(cited, ["devops-07"])
+    assert problems == [
+        f"{files / 'n.md'}#line=99 does not exist (check the path and the locator; text(path) shows them)"
+    ]
+    assert citation_notes(cited[:1], ["nowhere-99"]) == [
+        "none of the cited units holds any value of the answer: cite the units the answer comes from"
+    ]
+    assert read(cited[0]) == '{"agent": "devops-07"}'
+    assert resolve(WsSource(path=str(files / "a.jsonl"), record="X")) == WsSource(
+        path=str(files / "a.jsonl"), record="X"
+    )

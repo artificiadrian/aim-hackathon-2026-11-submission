@@ -18,6 +18,7 @@ from mcnulty.agent.actions import Gate, verified_contacts
 from mcnulty.agent.citations import line_records
 from mcnulty.agent.prompt import (
     CUT_REPLY,
+    LAST_RETRY,
     LAST_STEP,
     SYSTEM,
     USE_A_TOOL,
@@ -191,12 +192,12 @@ def loop(rec: Recorder, tools: Tools, task: Task, deadline: Deadline) -> Solutio
         SystemMessage(content=SYSTEM),
         UserMessage(content=first_message(task.instruction, files.trusted, files.history, files.sizes, tables)),
     ]
-    locators_asked = False
+    citations_asked = False
     rejected_before = False
-    for step in range(1, MAX_STEPS + 1):
-        last = step == MAX_STEPS or deadline.left() < LAST_CALL_LEFT
+    for step in range(1, MAX_STEPS + 2):  # one more step only when the last one did not submit
+        last = step >= MAX_STEPS or deadline.left() < LAST_CALL_LEFT
         if last:
-            messages.append(UserMessage(content=LAST_STEP))
+            messages.append(UserMessage(content=LAST_STEP if step <= MAX_STEPS else LAST_RETRY))
         reply = tools.llm.chat(
             rec,
             shorten_old_outputs(tuple(messages)),
@@ -221,12 +222,12 @@ def loop(rec: Recorder, tools: Tools, task: Task, deadline: Deadline) -> Solutio
                 content = f"[step {step} of {MAX_STEPS}] {run.output}"  # so the model plans to finish in time
                 messages.append(ToolMessage(tool_call_id=call.id, content=content))
                 continue
-            match check_submit(run.submitted, last, locators_asked, rejected_before):
+            match check_submit(run.submitted, last, citations_asked, rejected_before):
                 case Accepted(args=args):
                     return solution(args, gate, step)
-                case Rejected(message=reason, asked_locators=asked):
-                    locators_asked = locators_asked or asked
+                case Rejected(message=reason, asked_citations=asked):
+                    citations_asked = citations_asked or asked
                     rejected_before = rejected_before or not asked
                     output = f"{run.output}\n{reason}" if run.output else reason
                     messages.append(ToolMessage(tool_call_id=call.id, content=output))
-    return FALLBACK.model_copy(update={"steps": MAX_STEPS})
+    return FALLBACK.model_copy(update={"steps": MAX_STEPS + 1})

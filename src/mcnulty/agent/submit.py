@@ -56,6 +56,7 @@ class SubmitArgs(ModelInput):
     answer: JsonValue = None
     sources: Annotated[tuple[ModelSource, ...], BeforeValidator(as_list)] = ()
     actions: Annotated[tuple[Action, ...], BeforeValidator(as_list)] = ()
+    notes: tuple[str, ...] = ()  # citation problems found by submit(...) in the sandbox (ws.submit)
 
 
 class Solution(Frozen):
@@ -121,6 +122,7 @@ class RawSubmit(ModelInput):
     answer: JsonValue = None
     sources: Annotated[tuple[JsonValue, ...], BeforeValidator(as_list)] = ()
     actions: Annotated[tuple[JsonValue, ...], BeforeValidator(as_list)] = ()
+    notes: tuple[str, ...] = ()
 
 
 class Salvaged(Frozen):
@@ -153,7 +155,9 @@ def salvage_submit(arguments: str):
             actions.append(ACTION.validate_python(item))
         except ValidationError as e:
             dropped.append(f"{item}: {e}")
-    args = SubmitArgs(outcome=raw.outcome, answer=raw.answer, sources=tuple(sources), actions=tuple(actions))
+    args = SubmitArgs(
+        outcome=raw.outcome, answer=raw.answer, sources=tuple(sources), actions=tuple(actions), notes=raw.notes
+    )
     return Salvaged(
         args=with_answer_value(args),
         dropped_sources=len(raw.sources) - len(sources),
@@ -172,8 +176,8 @@ def missing_locators(args: SubmitArgs):
 
 def missing_locators_message(missing: list[str]):
     return (
-        f"not submitted: these sources have no locator: {', '.join(sorted(set(missing)))}. A file citation earns "
-        "nothing; cite each line, record, row, paragraph or page your answer rests on, then call submit again."
+        f"these sources have no locator: {', '.join(sorted(set(missing)))}; a file citation earns nothing: cite "
+        "each line, record, row, paragraph or page your answer rests on"
     )
 
 
@@ -190,12 +194,13 @@ class Accepted(Frozen):
 
 class Rejected(Frozen):
     message: str
-    asked_locators: bool = False
+    asked_citations: bool = False
 
 
-def check_submit(arguments: str, last: bool, locators_asked: bool, rejected_before: bool) -> Accepted | Rejected:
+def check_submit(arguments: str, last: bool, citations_asked: bool, rejected_before: bool) -> Accepted | Rejected:
     """Accept a submission, or say why not. An invalid part is dropped and the rest kept; only a dropped action
-    (losing it fails an action task) or a missing locator sends it back, once, and never on the last step."""
+    (losing it fails an action task) or a problem with the citations (no locator; a note from the sandbox's check
+    against the files) sends it back, once each, and never on the last step."""
     try:
         args = parse_submit(arguments)
     except ValidationError as e:
@@ -206,8 +211,14 @@ def check_submit(arguments: str, last: bool, locators_asked: bool, rejected_befo
             return Rejected(message="not submitted, invalid actions: " + "; ".join(salvaged.dropped_actions))
         args = salvaged.args
     missing = missing_locators(args)
-    if missing and not locators_asked and not last:
-        return Rejected(message=missing_locators_message(missing), asked_locators=True)
+    problems = [*args.notes, *([missing_locators_message(missing)] if missing else [])]
+    if problems and not citations_asked and not last:
+        listed = "\n".join(f"- {p}" for p in problems)
+        message = (
+            f"not submitted yet; the citations need a look:\n{listed}\nFix them and submit again (submitting the "
+            "same again keeps them)."
+        )
+        return Rejected(message=message, asked_citations=True)
     return Accepted(args=args)
 
 

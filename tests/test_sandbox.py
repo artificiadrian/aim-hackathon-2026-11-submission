@@ -260,7 +260,7 @@ def test_passes_the_helpers_cite_every_format_with_its_locator(box: TaskSandbox,
     shown = run_ok(box, rec, "print(text('/tmp/a.xlsx'))")
     assert "sheet=Alerts row=5| A-2 | TOK-2 | closed (hidden row)" in shown
     hits = run_ok(box, rec, "print([str(h) for h in grep('devops-07', '/tmp')])")
-    assert hits == """['/tmp/a.jsonl line=2| {"agent": "devops-07"}']"""
+    assert hits == """['/tmp/a.jsonl#line=2| {"agent": "devops-07"}']"""
     submitted = box.run(
         rec, "submit('OK', 1, sources=grep('devops-07', '/tmp/a.jsonl', '/tmp/a.json') + cite('/tmp/a.json', 'X-1'))"
     )

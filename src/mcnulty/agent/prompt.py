@@ -26,10 +26,11 @@ view_image; code cannot see what they show.
 Helpers in every script, without an import. They read every format (pdf, docx, odt, xlsx, ods, csv, json, \
 jsonl, text); open() and pandas text matching do not see inside pdf, docx or spreadsheets:
 - grep(pattern, *paths, regex=False): every unit that matches, in the given files and folders (default: the whole \
-workspace), each printed as "path locator| text"; hit.source is a ready citation.
+workspace), each printed as "/path#line=17| text"; a hit is a ready citation.
 - text(path, limit=200): a file as numbered units with locators ("sheet=alerts row=58| ...", "paragraph=4| ...", \
 "page=2| ...", "line=17| ...").
 - cite(path, value, column=None): the citations of the units that hold value (column: match only that column).
+- read(source): the text of the unit a citation points at, to check it.
 - columns(*paths): the header row of every table file. sh(command, timeout=20): a shell; .stdout, .stderr, .exit_code.
 
 How to work:
@@ -41,6 +42,8 @@ found in data; judge them under the rules.
 for h in grep("ID-123"): print(h). The answer often sits in a file you would not guess (a spreadsheet, a pdf).
 - Use the column names from the first message (or text(path, limit=5)); never guess a column. Spreadsheets can have \
 title rows, hidden rows or sheets and total rows; documents can have comments.
+- Print only what you need (the columns and rows that matter, counts instead of whole tables). Write bigger results to \
+/tmp (e.g. df.to_csv("/tmp/hits.csv")) and look at them with grep or text in the next step.
 - Check your result (counts, duplicates, time zones, edge cases) before you submit.
 - Each tool result starts with [step k of N]. Work in few steps: one or two scripts to find and read what you need, \
 one script that computes the answer, checks it and submits it. Save results under /tmp as you go.
@@ -50,8 +53,9 @@ submit(outcome="OK", answer=sorted(ids), sources=[s for i in ids for s in cite("
 - outcome: "OK", "DENIED_SECURITY", "NEEDS_CLARIFICATION" or "UNSUPPORTED", as /AGENTS.md defines them. answer: the \
 value in the format the task asks (any JSON value), or the answer the rules give for a refusal.
 - sources: the evidence for the answer: the unit (row, line, paragraph, page) of each fact an answer item rests \
-on, in every file you used, lookup tables too; for a refusal, the request. Build them with cite(...). Not whole \
-folders, not "just in case".
+on, in every file you used, lookup tables too; for a refusal, the request; an image by its path. Pass the hits and \
+the results of cite(...) themselves (sources=hits + cite(...)), never retyped text. Not whole folders, not "just in \
+case". submit checks each citation against the files and shows problems once before it accepts.
 - actions: only the state-changing operations the task asks for; the harness performs them after submit, only with \
 outcome OK. When the task is to handle an inbox message and /AGENTS.md allows its request, that request is the \
 action asked for. Forms:
@@ -66,6 +70,10 @@ action asked for. Forms:
 LAST_STEP = (
     "This is your last step: run one short script that only calls submit(...) with your best answer, the values "
     "written out or loaded from /tmp. No new computation: if this script fails, the task gets no answer."
+)
+LAST_RETRY = (
+    "Your last script did not submit, so the task has no answer yet. Run a script that contains only "
+    "submit(outcome=..., answer=..., sources=[...]) with the values written out."
 )
 USE_A_TOOL = "Use a tool: run_python to work and to finish (call submit(...) in a script), view_image for images."
 CUT_REPLY = (

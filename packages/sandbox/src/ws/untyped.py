@@ -36,3 +36,16 @@ def odt_units(path: str):
             stack.extend(reversed(getattr(node, "childNodes", [])))
     texts = [t for t in paragraphs if t.strip()]
     return [Unit(source=Source(path=path, paragraph=n), text=t) for n, t in enumerate(texts, 1)]
+
+
+def wide_pandas():
+    """pandas prints 80 characters wide and elides columns ("id ... outcome"): scripts then print the same table again
+    and again. Called only for scripts that use pandas: importing it costs about a second."""
+    import importlib.util
+
+    if importlib.util.find_spec("pandas") is None:
+        return
+    import pandas as pd
+
+    for option, value in (("display.width", 250), ("display.max_columns", 50), ("display.max_colwidth", 80)):
+        pd.set_option(option, value)
