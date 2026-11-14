@@ -19,6 +19,7 @@ from pydantic import ValidationError
 from mcnulty.agent.actions import Gate
 from mcnulty.agent.citations import line_records
 from mcnulty.agent.guards import visible
+from mcnulty.agent.jev import MAX_LINES, TEXT_TYPES, asked, classify, classify_report, lines_of
 from mcnulty.agent.prompt import (
     CUT_REPLY,
     LAST_FIX,
@@ -38,6 +39,7 @@ from mcnulty.agent.submit import (
     SUBMIT,
     TOOLS,
     Accepted,
+    ClassifyArgs,
     Rejected,
     RunPythonArgs,
     ScriptRun,
@@ -221,6 +223,20 @@ class Tools:
             return f"error: {args.path} is not an image file of the workspace (use the full path, e.g. /scans/a.jpg)"
         return self.llm.describe_image(rec, url, args.question, max_tokens=1500)
 
+    def classify(self, rec: Recorder, args: ClassifyArgs):
+        data = self.blobs.get(self.files.paths[args.path]) if args.path in self.files.paths else None
+        if data is None or not args.path.lower().endswith(TEXT_TYPES):
+            kinds = ", ".join(TEXT_TYPES)
+            return f"error: {args.path} is not a text file of the workspace ({kinds}); use the full path"
+        lines = lines_of(data)
+        if len(lines) > MAX_LINES:
+            return f"error: {args.path} has {len(lines):,} lines (at most {MAX_LINES:,}); filter it with code first"
+        try:
+            return classify_report(args.path, classify(rec, self.llm, lines, args.question))
+        except LLMError as e:  # also the spend cap: the task goes on with code and its best answer so far
+            rec.log(ToolFailed(tool="classify", error=ErrorInfo.from_exception(e)))
+            return f"error: classify failed ({type(e).__name__}); work without it"
+
     def call(self, rec: Recorder, call: ToolCall):
         """Run one tool call. A ``submit`` tool call (offered only on the retry after the last step) comes back as its
         arguments; a bad call or a failed tool becomes an error text for the model, so the task goes on."""
@@ -232,6 +248,8 @@ class Tools:
                 return self.run_python(rec, RunPythonArgs.model_validate_json(arguments))
             if name == "view_image":
                 return ScriptRun(output=self.view_image(rec, ViewImageArgs.model_validate_json(arguments)))
+            if name == "classify":
+                return ScriptRun(output=self.classify(rec, ClassifyArgs.model_validate_json(arguments)))
         except ValidationError as e:
             return ScriptRun(output=f"error in the arguments of {name}: {e}")
         except BudgetExhausted:
@@ -258,6 +276,10 @@ def solve(
         result = loop(rec, Tools(llm=llm, box=box, files=task_files, blobs=blobs), task, deadline)
     finally:
         box.remove()
+    if result.actions and deadline.left() > LAST_CALL_LEFT:  # shadow mode: recorded, never blocks; skipped late
+        tickets = [t for p, t in task_files.trusted.items() if p not in task_files.operator]
+        request = "\n\n".join([task.instruction, *tickets])
+        asked(rec, llm, request, tuple(v.action for v in result.actions))
     rec.log(TaskSolved(solution=result.model_dump(mode="json")))
     return result
 

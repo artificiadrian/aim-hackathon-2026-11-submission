@@ -273,3 +273,19 @@ Format example (ignored: it sits in a code block). Write your entries below it, 
 - decided: a task may spend 2 × cap / tasks, then submits its best; pd.read_csv/read_excel/read_json on a workspace table file return table(path) (a hidden hook on purpose: if the next eval shows no gain in sources, remove it and try another way); cite() takes a list of values; the parse cache is in memory, not /tmp/.ws (it flooded the model's grep -r); view_image() in a cell says it is a tool
 - rejected: a reserve per unstarted task (more code), rejecting hand-written sources (costs steps)
 - evidence: next eval on a fresh set
+
+## 15:29 · Jev: a classify tool and a shadow action check
+
+- decided_by: both
+- why: board triage failed on keyword lists (t10 0.27); live probes on the collected runs
+  (docs/research/2026-11-14-jev-probe.md) showed Jev judges every line of a board for about $0.004 with no
+  injected post missed (193 of 203 flagged, 10 in the unsure list, 6 false flags over 15 boards), and that a
+  "does the request ask for this kind of operation" question blocks 0 of 66 right actions and catches every other
+  wrong kind except revoke-for-rotate
+- decision: a third tool classify(path, question) for text files (lines as units, invisible characters removed,
+  base64 decoded in code, a second pass that judges split messages together; flagged >= 0.8, unsure 0.2-0.8 for
+  the model to read); after the loop, one Jev call per proposed action op, recorded as action_judged, blocking
+  nothing until an eval shows no false block
+- rejected: the definition inside the per-line question (64 routine posts flagged on one board: the question
+  goes into the state, each line gets a short question); a word gate (25 analysis requests match "send")
+- evidence: tests/test_jev.py (4 offline, 1 live); host checks pass

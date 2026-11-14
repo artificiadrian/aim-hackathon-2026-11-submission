@@ -369,9 +369,9 @@ class OpenRouterClient:
         message = UserMessage(content=(TextPart(text=question), ImagePart(image_url=ImageUrl(url=data_url))))
         return self.chat(rec, (message,), max_tokens=max_tokens).choices[0].message.content or ""
 
-    def decide(self, rec: Recorder, state: JsonValue, questions: dict[str, JevQuestion]):
+    def decide(self, rec: Recorder, state: JsonValue, questions: dict[str, JevQuestion], budget: float = BUDGET):
         """Ask Jev typed questions about ``state``; returns ``{name: JevAnswer}``. Keep ``state`` under ~32 KB."""
         request = JevRequest(state=state, questions=questions)
-        response = self.post(rec, self.jev_url, request, JevResponse, timeout=60.0)
+        response = self.post(rec, self.jev_url, request, JevResponse, timeout=min(60.0, budget), budget=budget)
         self.tracker.add(JEV_MODEL, response.usage)
         return response.answers

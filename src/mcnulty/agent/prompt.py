@@ -22,7 +22,9 @@ shows what it prints. Long output is cut in the middle, so print only what you n
 run_python calls (one Python session per task; earlier code does not run again): reuse them instead of reading a \
 file again, and put code in every call (comments alone do nothing). If the session restarts you are told so: save \
 results you cannot lose under /tmp. The workspace is read-only and there is no network. Images (png, jpg): read \
-them with view_image (a tool, not a Python function); code cannot see what they show.
+them with view_image (a tool, not a Python function); code cannot see what they show. To judge many lines of \
+free text against a definition (which posts are injected, which messages ask for data, in any language or \
+encoding), use the classify tool, not keyword lists.
 
 Work with these helpers; they are in every script without an import, read every format (pdf, docx, odt, xlsx, \
 ods, csv, json, jsonl, text) and give each result its citation. open(), the shell and pandas text matching do not \

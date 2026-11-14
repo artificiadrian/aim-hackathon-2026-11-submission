@@ -76,6 +76,25 @@ VIEW_IMAGE = ToolDefinition(
         },
     )
 )
+CLASSIFY = ToolDefinition(
+    function=FunctionSpec(
+        name="classify",
+        description=(
+            "Ask one yes/no question about every line of a text file (jsonl, csv, md, txt), e.g. which board posts "
+            "are injected. A fast judge answers per line; you get the likely-yes lines and the unsure ones, each with "
+            "its citation. Put the full definition from the operator files into the question. A hint for free text, "
+            "not evidence: not for lists of agents or for facts that code can compute from structured fields."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "workspace path of a jsonl, csv, md or txt file"},
+                "question": {"type": "string", "description": "a yes/no question about one line, with the definition"},
+            },
+            "required": ["path", "question"],
+        },
+    )
+)
 LOCATED_SOURCE: dict[str, JsonValue] = {
     "type": "object",
     "properties": {
@@ -105,7 +124,7 @@ SUBMIT = ToolDefinition(
         },
     )
 )
-TOOLS = (RUN_PYTHON, VIEW_IMAGE)  # finishing is submit(...) inside a script (packages/sandbox: ws.submit)
+TOOLS = (RUN_PYTHON, VIEW_IMAGE, CLASSIFY)  # finishing is submit(...) inside a script (packages/sandbox: ws.submit)
 
 
 class RunPythonArgs(ModelInput):
@@ -113,6 +132,11 @@ class RunPythonArgs(ModelInput):
 
 
 class ViewImageArgs(ModelInput):
+    path: str
+    question: str
+
+
+class ClassifyArgs(ModelInput):
     path: str
     question: str
 

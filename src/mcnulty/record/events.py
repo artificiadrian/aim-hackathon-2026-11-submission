@@ -238,6 +238,15 @@ class SandboxRan(Frozen):
     restarted: str | None = None  # the session was started again before this run, and why ("idle", "killed by ...")
 
 
+class ActionJudged(Frozen):
+    """Shadow check of one proposed action (``agent/jev.py``): Jev's probability that the trusted request asks for
+    its kind of operation. Recorded only; it blocks nothing."""
+
+    kind: Literal["action_judged"] = "action_judged"
+    action: JsonValue
+    asked: float | None  # None: Jev refused or the call failed
+
+
 class CheckResult(Frozen):
     """One step of ``mcnulty check``."""
 
@@ -262,6 +271,7 @@ Event = Annotated[
     | SandboxRan
     | ToolFailed
     | DeadlineReached
+    | ActionJudged
     | CheckResult,
     Field(discriminator="kind"),
 ]
