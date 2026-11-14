@@ -6,7 +6,8 @@ from typing import Annotated, Literal
 
 from pydantic import Field
 
-from mcnulty.recorder import ErrorInfo, Frozen
+from mcnulty.frozen import Frozen
+from mcnulty.record.events import ErrorInfo
 from mcnulty.workspace.csv_file import parse_csv
 from mcnulty.workspace.document import DocumentFile
 from mcnulty.workspace.docx_file import parse_docx

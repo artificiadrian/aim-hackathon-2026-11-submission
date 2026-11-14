@@ -11,7 +11,9 @@ from typing import Annotated, Literal
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, PrivateAttr, ValidationError
 
-from mcnulty.recorder import ErrorInfo, Frozen, LlmExchange, LlmFailed, Recorder
+from mcnulty.frozen import Frozen
+from mcnulty.record.events import ErrorInfo, LlmExchange, LlmFailed
+from mcnulty.record.log import Recorder
 from mcnulty.settings import Settings
 
 MAIN_MODEL = "google/gemma-4-31b-it"

@@ -4,7 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from mcnulty.arena import BlobCache, RunManifest, RunStatus, Source
+from mcnulty.blobs import BlobCache
+from mcnulty.clients.arena import RunManifest, RunStatus, Source
 from mcnulty.settings import REPO_ROOT
 from mcnulty.workspace.workspace import ParseCache, Workspace
 

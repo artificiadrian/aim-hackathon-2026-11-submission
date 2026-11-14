@@ -11,7 +11,7 @@ FROM python:3.12-slim-bookworm
 COPY --from=ghcr.io/astral-sh/uv:0.9.11 /uv /usr/local/bin/uv
 
 # The sandbox libraries go into the system Python. The harness has its own /app/.venv, which does not see them, and
-# at start src/mcnulty/sandbox.py copies this root filesystem (without /app, uv, ...) as the sandbox's root.
+# at start src/mcnulty/agent/sandbox.py copies this root filesystem (without /app, uv, ...) as the sandbox's root.
 RUN uv pip install --system --no-cache \
         pandas==3.1.1 numpy==2.5.4 openpyxl==3.1.5 odfpy==1.4.1 python-docx==1.2.0 pypdf==6.20.0 \
         pillow==13.0.0 tzdata==2026.6 pyyaml==6.0.3 \
@@ -27,7 +27,7 @@ ENV PYTHONUNBUFFERED=1 \
     UV_PROJECT_ENVIRONMENT=/app/.venv \
     PATH="/app/.venv/bin:${PATH}"
 
-# The harness runs as root: chroot needs it. Model-written code runs as uid 10001 (see src/mcnulty/sandbox.py).
+# The harness runs as root: chroot needs it. Model-written code runs as uid 10001 (see src/mcnulty/agent/sandbox.py).
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project

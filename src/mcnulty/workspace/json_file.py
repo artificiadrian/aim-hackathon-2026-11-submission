@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import JsonValue
 
-from mcnulty.recorder import Frozen
+from mcnulty.frozen import Frozen
 from mcnulty.workspace.text_file import TextLine, text_lines
 
 

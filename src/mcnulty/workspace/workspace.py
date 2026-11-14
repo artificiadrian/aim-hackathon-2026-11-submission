@@ -4,8 +4,10 @@ import threading
 
 from pydantic import BaseModel, PrivateAttr
 
-from mcnulty.arena import BlobCache, Source
-from mcnulty.recorder import ErrorInfo, Frozen
+from mcnulty.blobs import BlobCache
+from mcnulty.clients.arena import Source
+from mcnulty.frozen import Frozen
+from mcnulty.record.events import ErrorInfo
 from mcnulty.workspace.document import DocumentFile, Paragraph
 from mcnulty.workspace.image_file import ImageFile
 from mcnulty.workspace.json_file import JsonFile

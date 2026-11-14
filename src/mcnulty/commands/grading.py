@@ -1,4 +1,4 @@
-"""Offline evaluation: run the solver on a saved dev run and grade each task against the revealed answers.
+"""Offline grade of one solution against a dev run's revealed answers. Pure functions.
 
 The grade follows the platform formula (docs/ARENA_DOCS.md, Scoring): ``answer · (0.7 + 0.3 · sources)`` when the
 outcome is right. The platform's partial credit is not published, so this is an approximation:
@@ -14,53 +14,15 @@ outcome is right. The platform's partial credit is not published, so this is an 
 """
 
 import json
-import time
-from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 
 from pydantic import JsonValue
 
-from mcnulty.actions import BlockDomain, Containment, QuarantineAgent, RotateToken, SendMessage, WriteDraft
-from mcnulty.arena import BlobCache, Run, RunManifest, RunStatus, Source, TaskStatus
-from mcnulty.llm import BudgetExhausted, OpenRouterClient
-from mcnulty.recorder import Frozen, Recorder, RunFinished, TaskCrashed, TaskScored
-from mcnulty.solver import FALLBACK, Solution, solve
+from mcnulty.agent.actions import BlockDomain, Containment, QuarantineAgent, RotateToken, SendMessage, WriteDraft
+from mcnulty.agent.submit import Solution
+from mcnulty.clients.arena import Source, TaskStatus
+from mcnulty.record.events import TaskScored
 
 LINE_TOLERANCE = 2
-
-
-class SavedRun(Frozen):
-    """A finished dev run in ``runs/``: its tasks, files and revealed answers."""
-
-    run: Run
-    manifest: RunManifest
-    finish: RunStatus
-
-    @classmethod
-    def load(cls, run_dir: Path):
-        def read(name: str):
-            return (run_dir / name).read_text(encoding="utf-8")
-
-        return cls(
-            run=Run.model_validate_json(read("run.json")),
-            manifest=RunManifest.model_validate_json(read("manifest.json")),
-            finish=RunStatus.model_validate_json(read("finish.json")),
-        )
-
-    def files(self, task_id: str):
-        return next(t.files for t in self.manifest.tasks if t.task_id == task_id)
-
-    def expected(self, task_id: str):
-        return next(t for t in self.finish.tasks if t.task_id == task_id)
-
-
-class EvalSummary(Frozen):
-    run_dir: str
-    seed: int | None
-    tasks: int
-    accuracy: float  # mean task score over the evaluated tasks
-    cost_usd: float
-    scores: dict[str, TaskScored]
 
 
 def canonical(value: JsonValue):
@@ -150,49 +112,4 @@ def grade(solution: Solution, expected: TaskStatus):
         sources_hit=hits,
         sources_expected=len(wanted),
         score=round(answer * (0.7 + 0.3 * sources), 4) if right else 0.0,
-    )
-
-
-def run_eval(rec: Recorder, llm: OpenRouterClient, blobs: BlobCache, saved: SavedRun, task_ids: tuple[str, ...]):
-    """Solve and grade ``task_ids`` of ``saved``; one stdout line per task. Model spend stops at the tracker's cap."""
-
-    def work(task_id: str):
-        task = next(t for t in saved.run.tasks if t.task_id == task_id)
-        task_rec = rec.for_task(task_id)
-        t0 = time.time()
-        try:
-            solution = solve(task_rec, llm, task, saved.files(task_id), blobs)
-        except BudgetExhausted:
-            solution = FALLBACK
-        except Exception as e:  # one task must never stop the evaluation
-            task_rec.log(TaskCrashed.from_exception(e))
-            solution = FALLBACK
-        scored = grade(solution, saved.expected(task_id))
-        task_rec.log(scored)
-        print(
-            f"{task_id} L{task.level} {scored.outcome}/{scored.expected_outcome} answer={scored.answer_score:.2f} "
-            f"sources={scored.sources_hit}/{scored.sources_expected} score={scored.score:.2f} "
-            f"{time.time() - t0:.0f}s ${llm.tracker.total:.4f}"
-        )
-        return task_id, scored
-
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        scores = dict(ex.map(work, task_ids))
-    t = llm.tracker
-    rec.log(
-        RunFinished(
-            cost_usd=t.total,
-            calls=t.calls,
-            prompt_tokens=t.prompt_tokens,
-            completion_tokens=t.completion_tokens,
-            by_model=t.by_model,
-        )
-    )
-    return EvalSummary(
-        run_dir=str(rec.events.run_dir),
-        seed=saved.run.seed,
-        tasks=len(scores),
-        accuracy=round(sum(s.score for s in scores.values()) / len(scores), 4) if scores else 0.0,
-        cost_usd=round(t.total, 6),
-        scores=scores,
     )

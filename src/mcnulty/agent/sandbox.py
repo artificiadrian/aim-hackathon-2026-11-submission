@@ -22,8 +22,10 @@ import threading
 import time
 from pathlib import Path
 
-from mcnulty.arena import BlobCache
-from mcnulty.recorder import FileSkipped, Frozen, Recorder, SandboxRan
+from mcnulty.blobs import BlobCache
+from mcnulty.frozen import Frozen
+from mcnulty.record.events import FileSkipped, SandboxRan
+from mcnulty.record.log import Recorder
 
 SITECUSTOMIZE = Path("/usr/local/lib/python3.12/site-packages/sitecustomize.py")  # only in the Docker image
 BASE = Path("/sandbox/base")

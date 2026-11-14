@@ -2,8 +2,8 @@
 
 from typing import Literal
 
-from mcnulty.arena import Source
-from mcnulty.recorder import Frozen
+from mcnulty.clients.arena import Source
+from mcnulty.frozen import Frozen
 
 
 class TextLine(Frozen):

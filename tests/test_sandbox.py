@@ -10,9 +10,9 @@ from pathlib import Path
 
 import pytest
 
-from mcnulty.arena import BlobCache
-from mcnulty.recorder import EventLog, Recorder
-from mcnulty.sandbox import SITECUSTOMIZE, TaskSandbox
+from mcnulty.agent.sandbox import SITECUSTOMIZE, TaskSandbox
+from mcnulty.blobs import BlobCache
+from mcnulty.record.log import EventLog, Recorder
 
 pytestmark = pytest.mark.skipif(not SITECUSTOMIZE.exists(), reason="the sandbox runs only inside the Docker image")
 CSV = b"id,actor,records\nR-1,ext,5\nR-2,int,7\n"

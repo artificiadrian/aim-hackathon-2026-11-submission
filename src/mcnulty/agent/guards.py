@@ -11,7 +11,7 @@
 import re
 from typing import Literal
 
-from mcnulty.recorder import Frozen
+from mcnulty.frozen import Frozen
 
 RULE_NGRAM = 20  # words in a row shared with an operator file that count as a copy; templates are shorter
 

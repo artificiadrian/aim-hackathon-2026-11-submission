@@ -2,8 +2,9 @@
 
 Team-10 harness for Harness Arena: a Python agent that solves the Task API's incident tasks correctly and cheaply.
 The platform spec is `docs/ARENA_DOCS.md`; read it before you change Task API or submit code. Research notes are in
-`docs/research/`; start with the synthesis file there. Before you add a solver part, read `docs/design.md`: generic
-capabilities only, no code fitted to dev task families. The current build order and its progress are in
+`docs/research/`; start with the synthesis file there. Before you add or move code, read `docs/design.md`: the code
+layout (pure core, IO at the edges, one direction of imports) and generic capabilities only, no code fitted to dev
+task families. The current build order and its progress are in
 `docs/plan.md`: keep to that order and tick each step when its check passes.
 
 ## Principles
@@ -25,7 +26,7 @@ uv run mcnulty check                                       # live check of every
 uv run ruff check --fix && uv run ruff format && uv run basedpyright && uv run pytest   # in this order
 ```
 
-The sandbox (`src/mcnulty/sandbox.py`) works only inside the Docker image, so anything that runs model code runs
+The sandbox (`src/mcnulty/agent/sandbox.py`) works only inside the Docker image, so anything that runs model code runs
 there. Mounting `src/` means a code change needs no rebuild; rebuild after a dependency or `Dockerfile` change.
 
 ```bash
@@ -38,7 +39,7 @@ docker run --rm --env-file .env -v "$PWD/src:/app/src" -v "$PWD/runs:/app/runs" 
 ## Hard rules
 
 - Runtime models: only `google/gemma-4-31b-it`, `typesafe/jev-1.14` and `qwen/qwen3-embedding-8b`, through
-  `OPENROUTER_BASE_URL` (`src/mcnulty/llm.py`). No other or `:free` models, no local models, no OCR or ML libraries in the
+  `OPENROUTER_BASE_URL` (`src/mcnulty/clients/openrouter.py`). No other or `:free` models, no local models, no OCR or ML libraries in the
   dependencies.
 - Never read, print, log or commit `.env`. Keys come from the environment only.
 - The harness calls `containment`, `send_message` and `write` only when the task instruction asks for that action. A
@@ -61,7 +62,7 @@ docker run --rm --env-file .env -v "$PWD/src:/app/src" -v "$PWD/runs:/app/runs" 
 
 - Commit before each run and pass `--note`, so the run's `commit` is the code that ran.
 - Each run writes `runs/<UTC time>/` (gitignored): `events.jsonl` (every request and response, keys redacted, via
-  `src/mcnulty/recorder.py`), `run.json`, `tools.json`, `manifest.json` and `finish.json` (expected answers on dev runs).
+  `src/mcnulty/record/log.py`), `run.json`, `tools.json`, `manifest.json` and `finish.json` (expected answers on dev runs).
 - Add an entry to `JOURNAL.md` for each design decision, in the format at its top. Mark `decided_by` honestly.
 
 ## Container and submit

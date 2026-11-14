@@ -8,9 +8,18 @@ import base64
 import time
 from pathlib import Path
 
-from mcnulty.arena import ArenaClient, git_meta
-from mcnulty.llm import CostTracker, FunctionSpec, OpenRouterClient, PickOne, ToolDefinition, UserMessage, YesNo
-from mcnulty.recorder import CheckResult, EventLog, Recorder
+from mcnulty.clients.arena import ArenaClient, git_meta
+from mcnulty.clients.openrouter import (
+    CostTracker,
+    FunctionSpec,
+    OpenRouterClient,
+    PickOne,
+    ToolDefinition,
+    UserMessage,
+    YesNo,
+)
+from mcnulty.record.events import CheckResult
+from mcnulty.record.log import EventLog, Recorder
 from mcnulty.settings import Settings
 
 READ_TOOL = ToolDefinition(

@@ -3,7 +3,7 @@
 import csv
 import io
 
-from mcnulty.arena import Source
+from mcnulty.clients.arena import Source
 from mcnulty.workspace.table import Table, TableFile, TableRow
 
 

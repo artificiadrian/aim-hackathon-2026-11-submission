@@ -13,9 +13,9 @@ from typing import get_args
 
 import pytest
 
-from mcnulty.actions import verified_contacts
-from mcnulty.arena import BlobCache
-from mcnulty.guards import FindingKind, defang_urls, outgoing_findings, unverified_recipient
+from mcnulty.agent.actions import verified_contacts
+from mcnulty.agent.guards import FindingKind, defang_urls, outgoing_findings, unverified_recipient
+from mcnulty.blobs import BlobCache
 from mcnulty.settings import REPO_ROOT
 
 GUARDS = ("defang", *get_args(FindingKind.__value__))

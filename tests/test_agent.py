@@ -1,7 +1,8 @@
-"""The loop's pure parts: submit parsing, the locator check, the file tree and the shortened history."""
+"""The agent's pure parts (prompt, submit): submit parsing, the locator check, the file tree, the shortened history."""
 
-from mcnulty.llm import Message, ToolMessage, UserMessage
-from mcnulty.solver import file_tree, missing_locators, parse_submit, salvage_submit, shorten_old_outputs
+from mcnulty.agent.prompt import file_tree, shorten_old_outputs
+from mcnulty.agent.submit import missing_locators, parse_submit, salvage_submit
+from mcnulty.clients.openrouter import Message, ToolMessage, UserMessage
 
 
 def test_submit_answer_given_as_json_text_becomes_its_value():
@@ -19,8 +20,8 @@ def test_sources_without_a_locator_are_found_except_path_only_types():
 
 
 def test_file_tree_lists_small_folders_and_counts_large_ones():
-    files = {f"/docs/a{i}.docx": "x" for i in range(13)} | {"/AGENTS.md": "y"}
-    tree = file_tree(files, {"/AGENTS.md": 3874})
+    sizes = {f"/docs/a{i}.docx": 10 for i in range(13)} | {"/AGENTS.md": 3874}
+    tree = file_tree(sizes)
     assert tree.splitlines() == ["/AGENTS.md  (3,874 bytes)", "/docs/  (13 files: 13 .docx)"]
 
 
@@ -28,7 +29,7 @@ def test_old_tool_outputs_are_shortened_and_the_latest_kept():
     long = "x" * 2000
     messages: list[Message] = [UserMessage(content="task")]
     messages += [ToolMessage(tool_call_id=str(i), content=long) for i in range(3)]
-    contents = [m.content for m in shorten_old_outputs(messages)]
+    contents = [m.content for m in shorten_old_outputs(tuple(messages))]
     assert isinstance(contents[1], str)
     assert len(contents[1]) < 700
     assert contents[2:] == [long, long]

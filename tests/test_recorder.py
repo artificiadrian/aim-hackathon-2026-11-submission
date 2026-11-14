@@ -2,7 +2,8 @@ from pathlib import Path
 
 from pydantic import TypeAdapter
 
-from mcnulty.recorder import Envelope, EventLog, Recorder, TaskCrashed
+from mcnulty.record.events import Envelope, TaskCrashed
+from mcnulty.record.log import EventLog, Recorder
 
 
 class QuotaError(RuntimeError):

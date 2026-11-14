@@ -2,7 +2,7 @@
 
 from xml.etree.ElementTree import Element
 
-from mcnulty.arena import Source
+from mcnulty.clients.arena import Source
 from mcnulty.workspace.odf import attr, content, paragraphs_text, tag
 from mcnulty.workspace.table import Table, TableFile, TableRow
 

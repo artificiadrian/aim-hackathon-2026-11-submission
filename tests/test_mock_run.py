@@ -14,8 +14,8 @@ from pydantic import TypeAdapter
 sys.path.insert(0, str(Path(__file__).parent))
 import mock_server
 
-from mcnulty.arena import BlobCache
-from mcnulty.recorder import Envelope, HttpExchange, RunFinished, TaskFinished
+from mcnulty.blobs import BlobCache
+from mcnulty.record.events import Envelope, HttpExchange, RunFinished, TaskFinished
 
 FAKE_ARENA_KEY = "arena_testsecret_0123456789"
 

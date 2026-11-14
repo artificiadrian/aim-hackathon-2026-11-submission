@@ -3,7 +3,7 @@
 import hashlib
 from typing import Literal
 
-from mcnulty.recorder import Frozen
+from mcnulty.frozen import Frozen
 from mcnulty.workspace.text_file import parse_text
 
 

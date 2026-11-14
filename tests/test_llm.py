@@ -3,8 +3,8 @@
 import httpx
 import pytest
 
-from mcnulty.llm import BudgetExhausted, CostTracker, OpenRouterClient, Usage
-from mcnulty.recorder import EventLog, Recorder
+from mcnulty.clients.openrouter import BudgetExhausted, CostTracker, OpenRouterClient, Usage
+from mcnulty.record.log import EventLog, Recorder
 
 
 def test_spend_cap_blocks_the_next_call(tmp_path):

@@ -9,8 +9,8 @@ from typing import Annotated, Literal
 
 from pydantic import Field
 
-from mcnulty.guards import Finding, defang_urls, outgoing_findings, unverified_recipient
-from mcnulty.recorder import Frozen
+from mcnulty.agent.guards import Finding, defang_urls, outgoing_findings, unverified_recipient
+from mcnulty.frozen import Frozen
 
 ADDRESS = re.compile(r"[^\s,;<>\"']+@[^\s,;<>\"']+\.[^\s,;<>\"']+")
 YES = frozenset({"yes", "true", "1", "y", "verified"})

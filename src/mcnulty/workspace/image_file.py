@@ -11,7 +11,7 @@ from typing import Literal
 
 from PIL import ExifTags, Image
 
-from mcnulty.recorder import Frozen
+from mcnulty.frozen import Frozen
 
 MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp"}
 TEXT_MAX = 10_000  # characters kept per hidden text

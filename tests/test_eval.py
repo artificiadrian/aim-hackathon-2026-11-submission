@@ -2,10 +2,10 @@
 
 from pydantic import JsonValue
 
-from mcnulty.actions import Containment, RotateToken, SendMessage, VettedAction
-from mcnulty.arena import Source, Submission, TaskStatus
-from mcnulty.eval import answer_score, grade
-from mcnulty.solver import Solution
+from mcnulty.agent.actions import Containment, RotateToken, SendMessage, VettedAction
+from mcnulty.agent.submit import Solution
+from mcnulty.clients.arena import Source, Submission, TaskStatus
+from mcnulty.commands.grading import answer_score, grade
 
 
 def test_answer_scalars_ignore_case_space_and_number_type():
