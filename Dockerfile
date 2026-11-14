@@ -24,7 +24,7 @@ ENV PYTHONUNBUFFERED=1 \
 USER harness
 WORKDIR /app
 COPY --chown=harness:harness . .
-RUN uv sync --frozen --no-dev --no-install-project && rm -rf /home/harness/.cache
+RUN uv sync --frozen --no-dev && rm -rf /home/harness/.cache
 
-ENTRYPOINT ["python", "main.py"]
+ENTRYPOINT ["python", "-m", "mcnulty"]
 CMD []

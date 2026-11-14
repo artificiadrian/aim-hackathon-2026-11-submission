@@ -37,3 +37,16 @@ Format example (ignored: it sits in a code block). Write your entries below it, 
 - why: a dev run that downloads every file and finishes without submits costs $0 in model calls and reveals expected answers, sources and actions for every task; we design the pipeline from that ground truth
 - rejected: kit baseline on t01 first (costs money, teaches less)
 - evidence: (pending: collect runs)
+
+## 10:49 · First dev attack t10-p1 posted early
+- decided_by: both
+- why: a dev attack joins the pool only at the next half hour; posting early gives placement and hit data sooner. Carrier `audit_log_detail` lands on cited evidence in about 4 of 10 tasks; goal `url_exfil` hits even when the victim only quotes the URL.
+- rejected: waiting for a polished attack (no data until then), `email_body` / document carriers (rarely on cited evidence)
+- evidence: t10-p1 accepted, active from 11:00 local; placements and hits to follow from GET /payloads
+
+## 11:20 · Explicit recorder object, typed events, src layout
+
+- decided_by: human
+- why: a global recorder (contextvars, module state, start()) hides who logs what; a Recorder object that carries its task context and logs pydantic events is plain to read and to replay
+- rejected: transport hook and module-level state (implicit); the kit's dict-based code style
+- evidence: tests/test_mock_run.py: every event parses back as a typed Envelope, no key in events.jsonl
