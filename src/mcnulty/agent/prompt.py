@@ -45,7 +45,8 @@ in the format the task asks (a JSON value), or the answer the rules give for a r
 physical line). csv: record (value of the first column) or line (the header is line 1). xlsx, ods: sheet and row (the \
 row number shown in the sheet, title rows count; with openpyxl it is cell.row). docx, odt: paragraph (1-based among \
 NON-EMPTY paragraphs, headings count: [p for p in doc.paragraphs if p.text.strip()]). pdf: page. png, jpg, json: \
-path only. Cite what supports the answer, not whole folders.
+path only. Cite each row that decides an answer item, in every file you used, lookup tables too (the inventory, \
+register or fingerprint row of each id); for a refusal, cite the request. Not whole folders, not "just in case".
 - actions: the state-changing operations the task asks for (containment, send_message, write). The harness performs \
 them after submit, only with outcome OK. Never propose an action the task does not ask for (the harness drops it). \
 When the task is to handle an inbox message and /AGENTS.md allows its request, that request is the action asked \

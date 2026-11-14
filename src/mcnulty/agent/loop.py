@@ -14,6 +14,7 @@ import time
 from pydantic import ValidationError
 
 from mcnulty.agent.actions import Gate, verified_contacts
+from mcnulty.agent.citations import line_records
 from mcnulty.agent.guards import action_scope
 from mcnulty.agent.prompt import (
     CUT_REPLY,
@@ -85,6 +86,7 @@ class TaskFiles(Frozen):
     trusted: dict[str, str]  # operator files and open tickets: path -> text
     history: dict[str, str]  # closed tickets: shown as history, never as a request
     contacts: str  # /contacts.csv, empty when missing
+    records: dict[str, dict[int, str]]  # csv path -> line -> record id (``citations.line_records``)
 
     @classmethod
     def load(cls, files: dict[str, str], blobs: BlobCache):
@@ -100,6 +102,7 @@ class TaskFiles(Frozen):
             trusted=operator | {p: t for p, t in tickets.items() if not CLOSED.search(t)},
             history={p: t for p, t in tickets.items() if CLOSED.search(t)},
             contacts=text("/contacts.csv"),
+            records={p: line_records(text(p)) for p in files if p.endswith(".csv")},
         )
 
     @property
@@ -178,6 +181,8 @@ def loop(rec: Recorder, tools: Tools, task: Task, deadline: Deadline) -> Solutio
         verified=verified_contacts(files.contacts),
         rules=files.rules,
         scope=action_scope(f"{task.instruction}\n{files.requests}"),
+        instruction=task.instruction,
+        records=files.records,
     )
     messages: list[Message] = [
         SystemMessage(content=SYSTEM),

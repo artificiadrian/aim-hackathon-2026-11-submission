@@ -2,6 +2,7 @@
 
 import json
 
+from mcnulty.agent.citations import fixed_sources, line_records
 from mcnulty.agent.prompt import OUTPUT_MAX, file_tree, script_output, shorten_old_outputs
 from mcnulty.agent.submit import (
     Accepted,
@@ -11,6 +12,7 @@ from mcnulty.agent.submit import (
     parse_submit,
     salvage_submit,
 )
+from mcnulty.clients.arena import Source
 from mcnulty.clients.openrouter import Message, ToolMessage, UserMessage
 from mcnulty.record.events import SandboxRan, Stream
 
@@ -136,3 +138,30 @@ def test_locators_written_as_strings_are_numbers():
     """Regression: strict models rejected "line": "24" and the model resent it unchanged for 9 steps (t07)."""
     args = parse_submit('{"outcome": "OK", "answer": 1, "sources": [{"path": "/a.csv", "line": "24"}]}')
     assert args.sources[0].line == 24
+
+
+def test_csv_lines_become_records_only_when_the_first_column_is_unique():
+    requests = 'request_id,actor\nRQ-1,a\nRQ-2,"multi\nline"\nRQ-3,c\n'
+    archive = "time,actor\n03:00,a\n03:00,b\n"
+    records = {"/r.csv": line_records(requests), "/archive.csv": line_records(archive)}
+    sources = (
+        Source(path="/r.csv", line=2),
+        Source(path="/r.csv", line=4),  # the end line of the multi-line record RQ-2
+        Source(path="/r.csv", line=5),
+        Source(path="/archive.csv", line=3),
+        Source(path="/r.csv", record="RQ-3"),  # a duplicate after conversion
+    )
+    fixed = fixed_sources(sources, records, "count the requests", frozenset())
+    assert fixed == (
+        Source(path="/r.csv", record="RQ-1"),
+        Source(path="/r.csv", record="RQ-2"),
+        Source(path="/r.csv", record="RQ-3"),
+        Source(path="/archive.csv", line=3),
+    )
+
+
+def test_an_inbox_task_cites_its_message():
+    paths = frozenset({"/inbox/mail_0412.md", "/contacts.csv"})
+    fixed = fixed_sources((), {}, "There is one new message in /inbox/. Deal with it.", paths)
+    assert fixed == (Source(path="/inbox/mail_0412.md"),)
+    assert fixed_sources((), {}, "Which agents leaked tokens?", paths) == ()

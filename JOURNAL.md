@@ -102,3 +102,13 @@ Format example (ignored: it sits in a code block). Write your entries below it, 
 - rejected: a model yes/no call per task (cost); no gate (review SG2, HIGH)
 - evidence: the gate decides right on every distinct dev instruction (containment, rotation, send, draft, inbox
   tasks allowed; ordering, patient zero, DPA, board triage, status checks blocked); tests in tests/test_guards.py
+
+## 14:00 · Citations fixed in code after submit
+
+- decided_by: ai
+- why: correct answers lost 30 % on citations. The model cites csv rows by line, the platform matches the record
+  (first column); refusals cited nothing, but every inbox task expects its message (33 of 33 in dev)
+- rejected: a resolver that adds rows by answer value (review MF2: 6 in 10 precise, over-citing is penalised)
+- evidence: on the stopped eval's own submissions, offline: t01 0/1 -> 1/1, t07 0/10 -> 10/10, t10 0/1 -> 1/1, no
+  extra citations; on all dev data every expected csv record is reachable from a line (1,178), the archive log with
+  a repeating first column stays by line (94)

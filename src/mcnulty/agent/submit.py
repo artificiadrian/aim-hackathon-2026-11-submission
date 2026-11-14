@@ -5,6 +5,7 @@ from typing import Annotated
 from pydantic import BeforeValidator, JsonValue, TypeAdapter, ValidationError
 
 from mcnulty.agent.actions import Action, Gate, VettedAction, vet
+from mcnulty.agent.citations import fixed_sources
 from mcnulty.agent.guards import clean_answer
 from mcnulty.clients.arena import Outcome, Source, Submission
 from mcnulty.clients.openrouter import FunctionSpec, ToolDefinition
@@ -213,6 +214,7 @@ def solution(args: SubmitArgs, gate: Gate, steps: int):
     """The checked result: the answer cleaned, sources only for workspace files, actions only with outcome OK, each
     defanged and vetted."""
     actions = tuple(vet(a, gate) for a in args.actions) if args.outcome == "OK" else ()
-    sources = tuple(s for s in args.sources if s.path in gate.paths)
+    cited = tuple(s for s in args.sources if s.path in gate.paths)
+    sources = fixed_sources(cited, gate.records, gate.instruction, gate.paths)
     submission = Submission(outcome=args.outcome, answer=clean_answer(args.answer), sources=sources)
     return Solution(submission=submission, actions=actions, steps=steps)

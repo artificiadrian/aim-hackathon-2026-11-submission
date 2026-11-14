@@ -279,7 +279,10 @@ ANALYSIS_TASKS = (  # instructions (from dev runs) that ask for no action, altho
 
 
 def gate_for(instruction: str):
-    return Gate(paths=frozenset(), verified=frozenset({"dpo@org.example"}), rules=(), scope=action_scope(instruction))
+    scope = action_scope(instruction)
+    return Gate(
+        paths=frozenset(), verified=frozenset({"dpo@org.example"}), rules=(), scope=scope, instruction="", records={}
+    )
 
 
 def containment(*ops: dict[str, str]):

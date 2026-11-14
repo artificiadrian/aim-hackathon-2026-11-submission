@@ -78,12 +78,14 @@ type Action = Annotated[Containment | SendMessage | WriteDraft, Field(discrimina
 
 
 class Gate(Frozen):
-    """What everything leaving the harness is checked against, for one task."""
+    """What everything leaving the harness is checked against and fixed with, for one task."""
 
     paths: frozenset[str]  # workspace files: the only valid source paths
     verified: frozenset[str]  # recipient addresses
     rules: tuple[str, ...]  # operator texts that must not be copied out
     scope: Scope  # the actions the task asks for
+    instruction: str  # for citations of the request itself (``citations.fixed_sources``)
+    records: dict[str, dict[int, str]]  # csv path -> physical line -> record id, for files with a unique first column
 
 
 def op_target(op: "ContainmentOp"):
