@@ -55,7 +55,7 @@ docker run --rm --env-file .env -v "$PWD/src:/app/src" -v "$PWD/runs:/app/runs" 
 
 ## Cost
 
-- Dev calls are no longer budget-limited (a new key, 2026-11-14 afternoon): test with real model calls, not fakes.
+- Dev model calls have no budget limit: test with real model calls, not fakes.
   The final run's cost still counts for half the score.
 - Cost is half the score. Prefer local parsing and code over model calls.
 - Every run, experiment or subagent that calls a model has a hard spend cap: stop calling models once it is reached.
@@ -65,6 +65,8 @@ docker run --rm --env-file .env -v "$PWD/src:/app/src" -v "$PWD/runs:/app/runs" 
 - Commit before each run and pass `--note`, so the run's `commit` is the code that ran.
 - Each run writes `runs/<UTC time>/` (gitignored): `events.jsonl` (every request and response, keys redacted, via
   `src/mcnulty/record/log.py`), `run.json`, `tools.json`, `manifest.json` and `finish.json` (expected answers on dev runs).
+- After every eval or live run, dispatch one review subagent with the brief `docs/run-review.md`: it writes
+  `docs/runs/<run>.md` and a line in `docs/runs/INDEX.md` (the inbox; check a line off when its findings are acted on).
 - Add an entry to `JOURNAL.md` for each design decision, in the format at its top. Mark `decided_by` honestly.
 
 ## Container and submit

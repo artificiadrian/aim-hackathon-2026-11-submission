@@ -1,6 +1,6 @@
 .venv/
 __pycache__/
-runs/
+/runs/
 .cache/
 .env
 .env.*
