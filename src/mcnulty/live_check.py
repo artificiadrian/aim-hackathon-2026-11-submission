@@ -1,7 +1,7 @@
 """Live check of every API the harness uses (``mcnulty check``). Costs well under $0.01 in model calls.
 
-Task API: starts a dev run, calls one read-only tool, reads a task manifest, finishes the run without submits.
-OpenRouter: one chat with a tool, one vision call, one embedding call, one Jev call.
+Task API: starts a dev run, calls one read-only tool, reads the run manifest, finishes the run without submits.
+OpenRouter: one chat with a tool, one vision call, one Jev call.
 """
 
 import base64
@@ -48,12 +48,11 @@ def live_check(settings: Settings):
             f"read /AGENTS.md on {task.task_id}",
         )
     )
-    manifest = arena.task_manifest(task_rec, run.run_id, task.task_id)
-    results.append(check(rec, "task api manifest", bool(manifest.files), f"{len(manifest.files)} files"))
-    images = sorted(
-        (f for f in manifest.files if f.path.endswith((".png", ".jpg"))),
-        key=lambda f: f.size or 0,
-    )
+    manifest = arena.run_manifest(task_rec, run.run_id)
+    files = next(t.files for t in manifest.tasks if t.task_id == task.task_id)
+    results.append(check(rec, "task api manifest", bool(files), f"{len(files)} files of {task.task_id}"))
+    sizes = {b.sha256: b.size for b in manifest.blobs}
+    images = sorted((p for p in files if p.endswith((".png", ".jpg"))), key=lambda p: sizes.get(files[p], 0))
 
     reply = llm.chat(
         task_rec,
@@ -75,27 +74,17 @@ def live_check(settings: Settings):
 
     if images:
         image = images[0]
-        data = arena.blob(task_rec, run.run_id, image.sha256, task.task_id)
-        mime = "image/png" if image.path.endswith(".png") else "image/jpeg"
+        data = arena.blob(task_rec, run.run_id, files[image], task.task_id)
+        mime = "image/png" if image.endswith(".png") else "image/jpeg"
         text = llm.describe_image(
             task_rec,
             f"data:{mime};base64,{base64.b64encode(data).decode()}",
             "Describe this image in one sentence.",
             80,
         )
-        results.append(check(rec, "vision", bool(text), f"{image.path}: {text[:80]!r}"))
+        results.append(check(rec, "vision", bool(text), f"{image}: {text[:80]!r}"))
     else:
         results.append(check(rec, "vision", False, "no image in the workspace"))
-
-    vectors = llm.embed(task_rec, ("agent token rotation", "quarantine an agent"))
-    results.append(
-        check(
-            rec,
-            "embeddings",
-            len(vectors) == 2 and len(vectors[0]) > 0,
-            f"{len(vectors[0])} dimensions",
-        )
-    )
 
     answers = llm.decide(
         task_rec,

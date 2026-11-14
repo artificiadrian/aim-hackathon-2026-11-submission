@@ -120,19 +120,6 @@ class RunManifest(Open):
     tasks: tuple[TaskFiles, ...] = ()
 
 
-class FileInfo(Open):
-    path: str
-    sha256: str
-    size: int | None = None
-    kind: str | None = None
-    content_type: str | None = None
-    readable: bool | None = None
-
-
-class TaskManifest(Open):
-    files: tuple[FileInfo, ...] = ()
-
-
 class RunMeta(Frozen):
     commit: str | None = None
     dirty: bool | None = None
@@ -278,10 +265,6 @@ class ArenaClient(BaseModel):
 
     def run_manifest(self, rec: Recorder, run_id: str):
         return RunManifest.model_validate(self.send(rec, "GET", f"/runs/{run_id}/manifest").json())
-
-    def task_manifest(self, rec: Recorder, run_id: str, task_id: str):
-        """A task's files in their current state (after writes and containment changes)."""
-        return TaskManifest.model_validate(self.send(rec, "GET", f"/runs/{run_id}/tasks/{task_id}/manifest").json())
 
     def blob(self, rec: Recorder, run_id: str, sha256: str, task_id: str | None = None):
         data = self.cache.get(sha256)

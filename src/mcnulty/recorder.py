@@ -130,7 +130,7 @@ class HttpFailed(Frozen):
 
 
 class LlmExchange(Frozen):
-    """One OpenRouter request (chat, embeddings or Jev) and its response."""
+    """One OpenRouter request (chat or Jev) and its response."""
 
     kind: Literal["llm"] = "llm"
     url: str
@@ -188,6 +188,14 @@ class RunFinished(Frozen):
     by_model: dict[str, float]
 
 
+class FileSkipped(Frozen):
+    """A workspace file not laid out in the task's sandbox: not downloaded, or a path outside the task root."""
+
+    kind: Literal["file_skipped"] = "file_skipped"
+    path: str
+    reason: Literal["not_downloaded", "outside_root"]
+
+
 class SandboxRan(Frozen):
     """One run of model-written code in the sandbox (``src/mcnulty/sandbox.py``)."""
 
@@ -219,6 +227,7 @@ Event = Annotated[
     | TaskFinished
     | TaskScored
     | RunFinished
+    | FileSkipped
     | SandboxRan
     | CheckResult,
     Field(discriminator="kind"),

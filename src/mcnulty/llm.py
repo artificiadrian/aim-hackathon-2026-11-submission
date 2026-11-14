@@ -1,4 +1,4 @@
-"""OpenRouter client: chat with tool calling (the fixed small model), vision, embeddings and Jev decisions.
+"""OpenRouter client: chat with tool calling (the fixed small model), vision and Jev decisions.
 
 Only three models are allowed at runtime (see AGENTS.md). Requests and responses are typed models; every exchange is
 logged to a Recorder.
@@ -16,7 +16,6 @@ from mcnulty.settings import Settings
 
 MAIN_MODEL = "google/gemma-4-31b-it"
 JEV_MODEL = "typesafe/jev-1.14"
-EMBED_MODEL = "qwen/qwen3-embedding-8b"
 RETRIES = 5
 
 type ReasoningEffort = Literal["none", "low", "medium", "high"]
@@ -141,11 +140,6 @@ class ChatRequest(Frozen):
     tool_choice: Literal["auto"] | None = None
 
 
-class EmbeddingRequest(Frozen):
-    model: str = EMBED_MODEL
-    input: tuple[str, ...]
-
-
 # --- Jev questions and answers ------------------------------------------------------------------------
 class YesNo(Frozen):
     """Yes/no question; the answer carries the probability of 'yes' in ``noul``."""
@@ -209,16 +203,6 @@ class ChatResponse(Reply):
     choices: tuple[Choice, ...] = Field(min_length=1)
     usage: Usage = Usage()
     provider: str | None = None
-
-
-class Embedding(Reply):
-    index: int
-    embedding: tuple[float, ...]
-
-
-class EmbeddingResponse(Reply):
-    data: tuple[Embedding, ...]
-    usage: Usage = Usage()
 
 
 class JevResponse(Reply):
@@ -342,15 +326,6 @@ class OpenRouterClient(BaseModel):
         """One vision call on an image passed as a base64 data URL."""
         message = UserMessage(content=(TextPart(text=question), ImagePart(image_url=ImageUrl(url=data_url))))
         return self.chat(rec, (message,), max_tokens=max_tokens).choices[0].message.content or ""
-
-    def embed(self, rec: Recorder, texts: tuple[str, ...]):
-        """Embedding vectors for ``texts`` in one request, in input order."""
-        url = f"{self.base_url}/embeddings"
-        response = self.post(rec, url, EmbeddingRequest(input=texts), EmbeddingResponse)
-        self.tracker.add(EMBED_MODEL, response.usage)
-        if len(response.data) != len(texts):
-            raise MalformedReply(url, 200, {"embeddings_expected": len(texts), "received": len(response.data)})
-        return tuple(row.embedding for row in sorted(response.data, key=lambda row: row.index))
 
     def decide(self, rec: Recorder, state: JsonValue, questions: dict[str, JevQuestion]):
         """Ask Jev typed questions about ``state``; returns ``{name: JevAnswer}``. Keep ``state`` under ~32 KB."""

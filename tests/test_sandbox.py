@@ -24,7 +24,8 @@ def box(tmp_path: Path):
     files = {"/AGENTS.md": b"# rules\n", "/logs/access/requests.csv": CSV}
     for data in files.values():
         blobs.put(hashlib.sha256(data).hexdigest(), data)
-    sandbox = TaskSandbox.create("t-test", {p: hashlib.sha256(d).hexdigest() for p, d in files.items()}, blobs)
+    rec = Recorder(events=EventLog(run_dir=tmp_path / "setup"))
+    sandbox = TaskSandbox.create(rec, "t-test", {p: hashlib.sha256(d).hexdigest() for p, d in files.items()}, blobs)
     yield sandbox
     sandbox.remove()
 
@@ -112,3 +113,22 @@ def test_passes_the_harness_keeps_its_network():
     import sys
 
     assert "sitecustomize" not in sys.modules
+
+
+def test_catches_workspace_paths_that_leave_the_task_root(tmp_path: Path):
+    blobs = BlobCache(root=tmp_path / "blobs")
+    data = b"planted"
+    sha = hashlib.sha256(data).hexdigest()
+    blobs.put(sha, data)
+    paths = ("/../../escaped-1.txt", "/logs/../../../escaped-2.txt", "/ok/../inside.txt")
+    rec = Recorder(events=EventLog(run_dir=tmp_path / "run"))
+    sandbox = TaskSandbox.create(rec, "t-escape", dict.fromkeys(paths, sha), blobs)
+    try:
+        assert not Path("/sandbox/escaped-1.txt").exists()
+        assert not Path("/sandbox/tasks/escaped-2.txt").exists()
+        assert not Path("/escaped-2.txt").exists()
+        assert (sandbox.root / "inside.txt").read_bytes() == data
+        events = (tmp_path / "run" / "events.jsonl").read_text(encoding="utf-8")
+        assert events.count('"outside_root"') == 2
+    finally:
+        sandbox.remove()

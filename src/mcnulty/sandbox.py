@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 
 from mcnulty.arena import BlobCache
-from mcnulty.recorder import Frozen, Recorder, SandboxRan
+from mcnulty.recorder import FileSkipped, Frozen, Recorder, SandboxRan
 
 SITECUSTOMIZE = Path("/usr/local/lib/python3.12/site-packages/sitecustomize.py")  # only in the Docker image
 BASE = Path("/sandbox/base")
@@ -91,19 +91,30 @@ class TaskSandbox(Frozen):
     root: Path
 
     @classmethod
-    def create(cls, task_id: str, files: dict[str, str], blobs: BlobCache):
-        """A fresh root for one task with its files (path -> sha256) at their workspace paths, read-only."""
+    def create(cls, rec: Recorder, task_id: str, files: dict[str, str], blobs: BlobCache):
+        """A fresh root for one task with its files (path -> sha256) at their workspace paths, read-only.
+
+        Paths are data: one that leaves the task root (``..``, or a link in the system folders) is skipped, since the
+        harness writes as root.
+        """
         ensure_base()
         root = TASKS / task_id
         shutil.rmtree(root, ignore_errors=True)
         TASKS.mkdir(parents=True, exist_ok=True)
         subprocess.run(["/bin/cp", "-al", str(BASE), str(root)], check=True)  # noqa: S603
+        real_root = root.resolve()
         for path, sha in files.items():
             data = blobs.get(sha)
             if data is None:
-                continue  # not downloaded: the file is missing in the sandbox as on a broken share
-            target = root / path.lstrip("/")
-            target.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+                rec.log(FileSkipped(path=path, reason="not_downloaded"))
+                continue
+            relative = Path(path.lstrip("/"))
+            folder = (root / relative).parent.resolve()  # follows links in the existing part of the path
+            if not relative.name or not folder.is_relative_to(real_root):
+                rec.log(FileSkipped(path=path, reason="outside_root"))
+                continue
+            folder.mkdir(mode=0o755, parents=True, exist_ok=True)
+            target = folder / relative.name
             target.unlink(missing_ok=True)  # a system file at a workspace path: never write through its hard link
             target.write_bytes(data)
             target.chmod(0o444)
