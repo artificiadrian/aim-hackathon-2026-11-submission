@@ -18,6 +18,8 @@ from mcnulty.agent.actions import Gate, verified_contacts
 from mcnulty.agent.citations import line_records
 from mcnulty.agent.prompt import (
     CUT_REPLY,
+    ENDING,
+    LAST_FIX,
     LAST_RETRY,
     LAST_STEP,
     SYSTEM,
@@ -59,7 +61,8 @@ from mcnulty.frozen import Frozen
 from mcnulty.record.events import ErrorInfo, TaskSolved, ToolFailed
 from mcnulty.record.log import Recorder
 
-MAX_STEPS = 12  # model calls per task; the last one must submit
+STEPS = {1: 12, 2: 12, 3: 16}  # model calls per task by level; the last one must submit (L1 tasks also used 12)
+MAX_STEPS = 12  # level not known
 MAX_TOKENS = 3000  # per model reply
 LAST_CALL_LEFT = 240.0  # seconds before the deadline: the next call is the submit-only last step
 CALL_RESERVE = 60.0  # seconds before the deadline at which a model call stops waiting or retrying
@@ -243,10 +246,15 @@ def loop(rec: Recorder, tools: Tools, task: Task, deadline: Deadline) -> Solutio
     rejected_before = False
     blocks_told = False
     best: SubmitArgs | None = None  # the latest parsed submission, sent back for repair: kept if no better one comes
-    for step in range(1, MAX_STEPS + 2):  # one more step only when the last one did not submit
-        last = step >= MAX_STEPS or deadline.left() < LAST_CALL_LEFT
+    sent_back = False  # the previous step's submission went back to the model with a reason
+    budget = STEPS.get(task.level or 0, MAX_STEPS)
+    for step in range(1, budget + 2):  # one more step only when the last one did not submit or was sent back
+        last = step >= budget or deadline.left() < LAST_CALL_LEFT
+        final = step > budget or deadline.left() < 2 * CALL_RESERVE  # no call left to fix a submission sent back
         if last:
-            messages.append(UserMessage(content=LAST_STEP if step <= MAX_STEPS else LAST_RETRY))
+            ask = LAST_FIX if sent_back else LAST_STEP if step <= budget else LAST_RETRY
+            messages.append(UserMessage(content=ask))
+        sent_back = False
         try:
             reply = tools.llm.chat(
                 rec,
@@ -272,22 +280,23 @@ def loop(rec: Recorder, tools: Tools, task: Task, deadline: Deadline) -> Solutio
         for call in message.tool_calls:
             run = tools.call(rec, call)
             if run.submitted is None:
-                content = f"[step {step} of {MAX_STEPS}] {run.output}"  # so the model plans to finish in time
+                ending = f"\n[{ENDING}]" if step == budget - 2 else ""
+                content = f"[step {step} of {budget}] {run.output}{ending}"  # so the model plans to finish in time
                 messages.append(ToolMessage(tool_call_id=call.id, content=content))
                 continue
-            match check_submit(run.submitted, last, citations_asked, rejected_before):
+            match check_submit(run.submitted, final, citations_asked, rejected_before):
                 case Accepted(args=args):
                     solved = solution(args, gate, step)
-                    blocked = "" if last or blocks_told else blocked_message(solved)
+                    blocked = "" if final or blocks_told else blocked_message(solved)
                     if not blocked:
                         return solved
-                    blocks_told, best, reason = True, args, blocked
+                    blocks_told, best, reason, sent_back = True, args, blocked, True
                 case Rejected(message=reason, asked_citations=asked, args=args):
                     citations_asked = citations_asked or asked
                     rejected_before = rejected_before or not asked
-                    best = args or best
+                    best, sent_back = args or best, True
             output = f"{run.output}\n{reason}" if run.output else reason
             messages.append(ToolMessage(tool_call_id=call.id, content=output))
     if best is not None:
-        return solution(best, gate, MAX_STEPS + 1)
-    return FALLBACK.model_copy(update={"steps": MAX_STEPS + 1})
+        return solution(best, gate, budget + 1)
+    return FALLBACK.model_copy(update={"steps": budget + 1})

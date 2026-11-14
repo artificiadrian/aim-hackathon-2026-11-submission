@@ -113,27 +113,27 @@ def test_script_output_keeps_stdout_and_stderr_apart():
 
 def test_a_script_submission_is_checked_like_the_tool():
     submitted = '{"outcome": "OK", "answer": [1], "sources": [{"path": "/a.csv", "record": "R-1"}]}'
-    accepted = check_submit(submitted, last=False, citations_asked=False, rejected_before=False)
+    accepted = check_submit(submitted, final=False, citations_asked=False, rejected_before=False)
     assert isinstance(accepted, Accepted)
     assert accepted.args.answer == [1]
 
 
 def test_a_bad_submission_is_rejected_only_for_actions_and_locators():
     file_only = '{"outcome": "OK", "answer": 2, "sources": [{"path": "/a.csv"}]}'
-    asked = check_submit(file_only, last=False, citations_asked=False, rejected_before=False)
+    asked = check_submit(file_only, final=False, citations_asked=False, rejected_before=False)
     assert isinstance(asked, Rejected)
     assert asked.asked_citations
     assert asked.args is not None  # kept as the best answer so far (audit A2)
     assert asked.args.answer == 2
-    assert isinstance(check_submit(file_only, last=False, citations_asked=True, rejected_before=False), Accepted)
+    assert isinstance(check_submit(file_only, final=False, citations_asked=True, rejected_before=False), Accepted)
     bad_source = '{"outcome": "OK", "answer": 2, "sources": [{"page": "x"}, {"path": "/l.md", "line": 4}]}'
-    kept = check_submit(bad_source, last=False, citations_asked=False, rejected_before=False)
+    kept = check_submit(bad_source, final=False, citations_asked=False, rejected_before=False)
     assert isinstance(kept, Accepted)
     assert [s.line for s in kept.args.sources] == [4]
     bad_action = '{"outcome": "OK", "answer": 2, "actions": [{"tool": "containment", "ops": []}]}'
-    assert isinstance(check_submit(bad_action, last=False, citations_asked=False, rejected_before=False), Rejected)
-    assert isinstance(check_submit(bad_action, last=False, citations_asked=False, rejected_before=True), Accepted)
-    assert isinstance(check_submit(bad_action, last=True, citations_asked=False, rejected_before=False), Accepted)
+    assert isinstance(check_submit(bad_action, final=False, citations_asked=False, rejected_before=False), Rejected)
+    assert isinstance(check_submit(bad_action, final=False, citations_asked=False, rejected_before=True), Accepted)
+    assert isinstance(check_submit(bad_action, final=True, citations_asked=False, rejected_before=False), Accepted)
 
 
 def test_locators_written_as_strings_are_numbers():

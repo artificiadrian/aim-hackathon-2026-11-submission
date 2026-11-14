@@ -184,23 +184,23 @@ class Rejected(Frozen):
     args: SubmitArgs | None = None  # the parsed submission, kept as the best answer so far
 
 
-def check_submit(arguments: str, last: bool, citations_asked: bool, rejected_before: bool) -> Accepted | Rejected:
+def check_submit(arguments: str, final: bool, citations_asked: bool, rejected_before: bool) -> Accepted | Rejected:
     """Accept a submission, or say why not. An invalid part is dropped and the rest kept; only a dropped action
     (losing it fails an action task) or a problem with the citations (no locator; a note from the sandbox's check
-    against the files) sends it back, once each, and never on the last step."""
+    against the files) sends it back, once each, and never when ``final`` (no call is left to fix it)."""
     try:
         args = parse_submit(arguments)
     except ValidationError as e:
         salvaged = salvage_submit(arguments)
         if salvaged is None:
             return Rejected(message=f"not submitted, the outcome or the JSON is invalid: {e}")
-        if salvaged.dropped_actions and not (last or rejected_before):
+        if salvaged.dropped_actions and not (final or rejected_before):
             reason = "not submitted, invalid actions: " + "; ".join(salvaged.dropped_actions)
             return Rejected(message=reason, args=salvaged.args)
         args = salvaged.args
     missing = missing_locators(args)
     problems = [*args.notes, *([missing_locators_message(missing)] if missing else [])]
-    if problems and not citations_asked and not last:
+    if problems and not citations_asked and not final:
         listed = "\n".join(f"- {p}" for p in problems)
         message = (
             f"not submitted yet; the citations need a look:\n{listed}\nFix them and submit again (submitting the "

@@ -80,6 +80,14 @@ LAST_RETRY = (
     "Your last script did not submit, so the task has no answer yet. Run a script that contains only "
     "submit(outcome=..., answer=..., sources=[...]) with the values written out."
 )
+LAST_FIX = (
+    "This is your very last call: run one short script that only calls submit(...) again with the fixes above, the "
+    "values written out or loaded from /tmp."
+)
+ENDING = (
+    "2 steps left. In this step, finish the answer and save it with its sources under /tmp (e.g. json.dump to "
+    "/tmp/answer.json, sources as text: [str(s) for s in sources]), or submit now. The last step only submits."
+)
 USE_A_TOOL = "Use a tool: run_python to work and to finish (call submit(...) in a script), view_image for images."
 CUT_REPLY = (
     "not run: your reply was cut at the token limit, so this call may be incomplete. Write a shorter script: save "
