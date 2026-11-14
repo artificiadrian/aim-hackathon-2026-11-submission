@@ -15,13 +15,15 @@ from pydantic import ValidationError
 
 from mcnulty.agent.actions import Gate, verified_contacts
 from mcnulty.agent.citations import line_records
-from mcnulty.agent.guards import action_scope
+from mcnulty.agent.guards import ANY_ACTION, Scope, parse_kinds
 from mcnulty.agent.prompt import (
     CUT_REPLY,
     LAST_STEP,
+    SCOPE_SYSTEM,
     SYSTEM,
     USE_A_TOOL,
     first_message,
+    scope_request,
     script_output,
     shorten_old_outputs,
 )
@@ -53,7 +55,7 @@ from mcnulty.clients.openrouter import (
     UserMessage,
 )
 from mcnulty.frozen import Frozen
-from mcnulty.record.events import ErrorInfo, TaskSolved, ToolFailed
+from mcnulty.record.events import ErrorInfo, ScopeDecided, TaskSolved, ToolFailed
 from mcnulty.record.log import Recorder
 
 MAX_STEPS = 12  # model calls per task; the last one must submit
@@ -156,6 +158,21 @@ class Tools(Frozen):
         return ScriptRun(output=f"error: no tool named {name}")
 
 
+def asked_scope(rec: Recorder, llm: OpenRouterClient, request: str):
+    """The kinds of action the request asks for, from one small model call on the request alone (no workspace
+    data, so injected text cannot sway it). Any failure allows every kind: a missed real action fails the task."""
+    messages = (SystemMessage(content=SCOPE_SYSTEM), UserMessage(content=request))
+    try:
+        reply = llm.chat(rec, messages, max_tokens=200, reasoning_effort="none", budget=60.0)
+        kinds = parse_kinds(reply.choices[0].message.content or "")
+    except LLMError as e:
+        rec.log(ToolFailed(tool="action_scope", error=ErrorInfo.from_exception(e)))
+        kinds = None
+    scope = ANY_ACTION if kinds is None else Scope(kinds=kinds)
+    rec.log(ScopeDecided(kinds=tuple(sorted(scope.kinds)), fell_back=kinds is None))
+    return scope
+
+
 def solve(
     rec: Recorder,
     llm: OpenRouterClient,
@@ -180,7 +197,7 @@ def loop(rec: Recorder, tools: Tools, task: Task, deadline: Deadline) -> Solutio
         paths=frozenset(files.paths),
         verified=verified_contacts(files.contacts),
         rules=files.rules,
-        scope=action_scope(f"{task.instruction}\n{files.requests}"),
+        scope=ANY_ACTION,  # decided by asked_scope once actions are proposed
         instruction=task.instruction,
         records=files.records,
     )
@@ -219,6 +236,9 @@ def loop(rec: Recorder, tools: Tools, task: Task, deadline: Deadline) -> Solutio
                 continue
             match check_submit(run.submitted, last, locators_asked, rejected_before):
                 case Accepted(args=args):
+                    if args.actions and args.outcome == "OK":
+                        scope = asked_scope(rec, tools.llm, scope_request(task.instruction, files.requests))
+                        gate = gate.model_copy(update={"scope": scope})
                     return solution(args, gate, step)
                 case Rejected(message=reason, asked_locators=asked):
                     locators_asked = locators_asked or asked

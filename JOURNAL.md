@@ -124,3 +124,15 @@ Format example (ignored: it sits in a code block). Write your entries below it, 
   rest by hash into the shared cache, each blob once per run (a lock per blob)
 - rejected: skip the big PDFs (never cited in dev, but that is fitting to dev data)
 - evidence: live check on run_94dAWU6i2EV- t01: 375 members, 373 match the manifest, 19 left out, 1 changed
+
+## 14:55 · Action gate by a small model call, not by word lists
+
+- decided_by: human
+- why: the 13:40 regex gate failed closed: a final request worded differently ("isolate", "cut off") would drop a
+  needed action and fail the task; its words were tuned on dev instructions (prior knowledge)
+- decision: when an accepted submission proposes actions with outcome OK, one call (Gemma, no tools, max 200 tokens)
+  reads only the instruction and the open ticket and lists the kinds asked for; injected workspace text never
+  reaches it. Unreadable reply or a failed call: every kind allowed (fail open). Content checks (defang, tokens,
+  verified recipient) stay
+- rejected: regex gate (brittle), no gate (an injected quarantine in an analysis task acts)
+- evidence: not yet measured with the model; the next eval shows the ScopeDecided events

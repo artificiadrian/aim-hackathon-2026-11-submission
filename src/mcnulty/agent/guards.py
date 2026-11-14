@@ -1,4 +1,4 @@
-"""Exact code checks on everything the agent sends out: answers, messages, drafts. No model, no task knowledge.
+"""Checks on everything the agent sends out: answers, messages, drafts, actions. No task knowledge.
 
 - URLs with a scheme, a path, a query, a fragment or a port are defanged (``hxxps://evil[.]example/x``), also in
   half-defanged or odd forms (``hxxps://evil.example/x``, ``//evil.example/x``, ``https:\\evil.example``,
@@ -7,16 +7,17 @@
 - Long word sequences copied from operator rules (AGENTS.md, runbook, policies) must not appear. Short prescribed
   templates (a one-line message format) are fine, so only long copies count, and they need a judgment, not a block.
 - A recipient must be byte-equal (ignoring ASCII case) to a verified address: look-alike Unicode never matches.
-- An action must be of a kind the trusted text (instruction, open ticket) asks for: an injected "quarantine X" in an
-  analysis task must not act. ``release_agent`` also needs the agent named there.
+- An action must be of a kind the request asks for: an injected "quarantine X" in an analysis task must not act.
+  The kinds come from a small model call that reads only the instruction and the open ticket (``Scope``, set in
+  ``agent/loop.py``); no word list, so new wording works. When that call fails, actions are allowed (fail open).
 """
 
 import re
 from enum import StrEnum
 
-from pydantic import JsonValue
+from pydantic import JsonValue, ValidationError
 
-from mcnulty.frozen import Frozen
+from mcnulty.frozen import Frozen, ModelInput
 
 RULE_NGRAM = 20  # words in a row shared with an operator file that count as a copy; templates are shorter
 
@@ -46,22 +47,8 @@ class FindingKind(StrEnum):
 
 BLOCKING = frozenset({FindingKind.TOKEN_VALUE, FindingKind.UNVERIFIED_RECIPIENT, FindingKind.NOT_ASKED})
 
-CONTAIN = r"\bcontain(?:ment)?\b"
-ASKED_BY = {  # action kind -> words in trusted text that ask for it
-    "quarantine_agent": re.compile(rf"\bquarantine\b|{CONTAIN}", re.IGNORECASE),
-    "release_agent": re.compile(r"\brelease\b", re.IGNORECASE),
-    "revoke_token": re.compile(rf"\brevoke\b|{CONTAIN}", re.IGNORECASE),
-    "rotate_token": re.compile(rf"\brotat(?:e|ion)\b|{CONTAIN}", re.IGNORECASE),
-    "block_domain": re.compile(rf"\bblock\b|{CONTAIN}", re.IGNORECASE),
-    "send_message": re.compile(r"\bsend\b", re.IGNORECASE),
-    "write": re.compile(r"\b(?:draft|write)\b", re.IGNORECASE),
-}
 CONTAINMENT_KINDS = frozenset({"quarantine_agent", "release_agent", "revoke_token", "rotate_token", "block_domain"})
-NOT_A_REQUEST = re.compile(  # paths, scopes (send:email_external), negations, what others were told to do
-    r"(?<!\w)/[\w./\-]+|\w+:\w+|\b(?:don't|do not|never|not)\s+\w+|\bto\s+(?:send|block|quarantine|release)\b",
-    re.IGNORECASE,
-)
-INBOX = re.compile(r"\binbox\b", re.IGNORECASE)
+ACTION_KINDS = CONTAINMENT_KINDS | {"send_message", "write"}
 
 
 class Finding(Frozen):
@@ -129,28 +116,31 @@ def unverified_recipient(address: str, verified: frozenset[str]):
 
 
 class Scope(Frozen):
-    """The actions a task asks for, read from its trusted text only (instruction, open ticket)."""
+    """The kinds of action a task asks for."""
 
     kinds: frozenset[str]
-    trusted: str  # for ids that an action must name
 
-    def allows(self, kind: str, target: str | None = None):
+    def allows(self, kind: str):
         if kind == "add_note":  # a note goes with any containment the task asks for
             return bool(self.kinds & CONTAINMENT_KINDS)
-        if kind not in self.kinds:
-            return False
-        return kind != "release_agent" or (target is not None and target.lower() in self.trusted.lower())
+        return kind in self.kinds
 
 
-def action_scope(trusted: str):
-    """Kinds asked for in ``trusted``. A task to handle an inbox message asks for what that message requests (the
-    model judges it under the rules; the recipient and token checks still apply), except releases. Paths do not
-    count: ``/artifacts/quarantine/`` asks for nothing, nor do "don't send it" or "tells agents to send data"."""
-    words = NOT_A_REQUEST.sub(" ", trusted)
-    kinds = {kind for kind, pattern in ASKED_BY.items() if pattern.search(words)}
-    if INBOX.search(trusted):
-        kinds |= set(ASKED_BY) - {"release_agent"}
-    return Scope(kinds=frozenset(kinds), trusted=trusted)
+ANY_ACTION = Scope(kinds=ACTION_KINDS)
+
+
+class KindsReply(ModelInput):
+    kinds: tuple[str, ...]
+
+
+def parse_kinds(reply: str):
+    """The kinds in a reply like ``{"kinds": ["block_domain"]}``; None when the reply holds no such object."""
+    match = re.search(r"\{.*\}", reply, re.DOTALL)
+    try:
+        parsed = KindsReply.model_validate_json(match.group(0)) if match else None
+    except ValidationError:
+        return None
+    return frozenset(k for k in parsed.kinds if k in ACTION_KINDS) if parsed else None
 
 
 def not_asked(kind: str, target: str | None = None, finding: FindingKind = FindingKind.NOT_ASKED):

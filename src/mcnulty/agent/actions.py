@@ -168,7 +168,7 @@ def vet(action: Action, gate: Gate):
                 for op in action.ops
             )
             action = action.model_copy(update={"ops": ops})
-            kept = tuple(op for op in ops if gate.scope.allows(op.op, op_target(op)))
+            kept = tuple(op for op in ops if gate.scope.allows(op.op))
             dropped = tuple(
                 f for op in ops if op not in kept for f in not_asked(op.op, op_target(op), FindingKind.OP_DROPPED)
             )

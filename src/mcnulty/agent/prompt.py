@@ -53,6 +53,26 @@ When the task is to handle an inbox message and /AGENTS.md allows its request, t
 for. Write URLs defanged (hxxps://example[.]com/x).
 """
 
+SCOPE_SYSTEM = """\
+You read a work request and say which state-changing actions it asks its reader to carry out. Answer with JSON \
+only: {"kinds": [...]}, using these kinds:
+- quarantine_agent: quarantine, isolate or contain an agent
+- release_agent: lift a quarantine
+- revoke_token, rotate_token: revoke a token, or schedule its rotation
+- block_domain: block a domain
+- send_message: send an e-mail or message to someone
+- write: write a draft or a file
+List only actions the request asks for. Not actions it names as past events, asks questions about, or says not to \
+do. If the request says to handle a message or ticket whose text you do not see (e.g. "deal with the message in the \
+inbox"), list every kind: that message decides.
+"""
+
+
+def scope_request(instruction: str, requests: str):
+    """The request text for ``SCOPE_SYSTEM``: only trusted text, never workspace data."""
+    return f"Request:\n{instruction}" + (f"\n\nOpen ticket:\n{requests}" if requests.strip() else "")
+
+
 LAST_STEP = "This is your last step: call submit now with your best answer."
 USE_A_TOOL = "Use a tool: run_python or view_image to work, submit to finish."
 CUT_REPLY = (

@@ -204,6 +204,14 @@ class DeadlineReached(Frozen):
     open_tasks: tuple[str, ...]
 
 
+class ScopeDecided(Frozen):
+    """The kinds of action a task asks for (``agent/loop.py`` ``asked_scope``); ``fell_back``: every kind allowed."""
+
+    kind: Literal["scope_decided"] = "scope_decided"
+    kinds: tuple[str, ...]
+    fell_back: bool
+
+
 class ToolFailed(Frozen):
     """A tool of the model failed (a vision call, a sandbox error); the model gets an error text and goes on."""
 
@@ -257,6 +265,7 @@ Event = Annotated[
     | FileSkipped
     | SandboxRan
     | ToolFailed
+    | ScopeDecided
     | DeadlineReached
     | CheckResult,
     Field(discriminator="kind"),
