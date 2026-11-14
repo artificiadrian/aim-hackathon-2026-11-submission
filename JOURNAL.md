@@ -57,3 +57,10 @@ Format example (ignored: it sits in a code block). Write your entries below it, 
 - why: one small harness that we can read, check and replay beats a clever one; typed models catch API drift at the boundary; full records let us debug any task after the run
 - rejected: raw dicts across functions, global state, stdout-only results
 - evidence: mcnulty check passes on typed request and response models (run_DaQJ7V011XKX, $0.00015); every task and run end is a typed event
+
+## 11:40 · Generic agent over per-family solvers (bitter lesson)
+
+- decided_by: human
+- why: the final runs on an unseen incident with new wording; code fitted to our 26 dev families can be free but wrong, and a wrong answer scores 0. Small generic capabilities (typed parsing, search, table query, one agent loop, generic guards) carry over
+- rejected: per-family deterministic solvers and a dev-phrasing router (prior knowledge that breaks on the final)
+- evidence: docs/research/2026-11-14-data-task-families.md (rules and formats change per seed); docs/design.md

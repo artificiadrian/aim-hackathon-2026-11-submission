@@ -2,7 +2,8 @@
 
 Team-10 harness for Harness Arena: a Python agent that solves the Task API's incident tasks correctly and cheaply.
 The platform spec is `docs/ARENA_DOCS.md`; read it before you change Task API or submit code. Research notes are in
-`docs/research/`; start with the synthesis file there.
+`docs/research/`; start with the synthesis file there. Before you add a solver part, read `docs/design.md`: generic
+capabilities only, no code fitted to dev task families.
 
 ## Principles
 
