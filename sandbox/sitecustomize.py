@@ -1,5 +1,5 @@
 """Loaded by every sandbox Python at start (``python -I`` still imports it): no network, ``submit``, the helpers of
-``ws.py`` (text, cite, grep, sh) as builtins, less noise.
+``ws`` (text, cite, grep, sh) as builtins, less noise.
 
 No network: a clear error for code that tries it (an injected "upload this" instruction, a URL fetch). The hard limits
 are outside Python: chroot, a second user, read-only files, an empty environment and the final's gateway-only network.
@@ -40,7 +40,12 @@ class NotJson(TypeError):
 
 
 def plain(value: object):
-    """numpy and pandas values (int64, Timestamp, arrays) and tuples or sets as plain JSON values."""
+    """numpy and pandas values (int64, Timestamp, arrays), tuples or sets, and the helpers' models (a ``Hit`` as its
+    source) as plain JSON values."""
+    if hasattr(value, "source") and hasattr(value, "model_dump"):
+        value = value.source  # a Hit cited as it is
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json", exclude_none=True)
     if hasattr(value, "tolist"):
         return value.tolist()  # numpy scalars and arrays
     if hasattr(value, "isoformat"):
@@ -67,8 +72,9 @@ def submit(outcome: str, answer: object = None, sources: object = (), actions: o
 
 builtins.submit = submit
 
-import ws  # noqa: E402 - the helpers sit next to this file; after the network hook
+from ws.search import cite, grep, text  # noqa: E402 - the helpers sit next to this file; after the network hook
+from ws.shell import sh  # noqa: E402
 
-for name in ("text", "cite", "grep", "sh"):
-    setattr(builtins, name, getattr(ws, name))
+for helper in (text, cite, grep, sh):
+    setattr(builtins, helper.__name__, helper)
 logging.getLogger("pypdf").setLevel(logging.ERROR)

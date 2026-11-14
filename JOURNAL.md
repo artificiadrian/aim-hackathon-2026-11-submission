@@ -168,3 +168,16 @@ Format example (ignored: it sits in a code block). Write your entries below it, 
   one tool keeps the prefix small; subprocess works from Python anyway
 - evidence: on all dev runs, the helpers produce the platform's expected locator for xlsx 109/109, ods 51/51, docx
   13/13, pdf 5/5, jsonl 824/824, md 108/108, csv 1,407/1,434 (the 27 are records of servers missing from the file)
+
+## 16:15 · Helpers as a package with typed results; real calls instead of fakes
+
+- decided_by: human
+- why: one file mixed parsing, search and shell; results as raw dicts and tuples were easy to misuse; a new key makes
+  dev calls unlimited, so tests should use the real model, not a scripted one
+- decision: sandbox/ws/ (models: Source, Unit, Hit as pydantic; formats: one reader per file type plus a parse cache
+  in /tmp; search: text, cite, grep over every format; shell: sh). grep returns Hit objects whose source goes into
+  submit(...) as is. tests/test_live_loop.py runs real Gemma in the real sandbox on saved tasks
+- evidence: locator check on all dev runs unchanged (xlsx 109/109, ods 51/51, docx 13/13, pdf 5/5, jsonl 824/824,
+  md 108/108); interpreter start 69 ms with the helpers loaded. The live test is not run yet: the key in .env got a
+  401 from openrouter.ai
+

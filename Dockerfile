@@ -14,11 +14,11 @@ COPY --from=ghcr.io/astral-sh/uv:0.9.11 /uv /usr/local/bin/uv
 # at start src/mcnulty/agent/sandbox.py copies this root filesystem (without /app, uv, ...) as the sandbox's root.
 RUN uv pip install --system --no-cache \
         pandas==3.1.1 numpy==2.5.4 openpyxl==3.1.5 odfpy==1.4.1 python-docx==1.2.0 pypdf==6.20.0 \
-        pillow==13.0.0 tzdata==2026.6 pyyaml==6.0.3 \
+        pillow==13.0.0 tzdata==2026.6 pyyaml==6.0.3 pydantic==2.14.3 \
     && rm -rf /usr/local/bin/pip* /usr/local/lib/python3.12/site-packages/pip* /root/.cache \
-    && python -c "import pandas, openpyxl, odf, docx, pypdf, PIL, yaml, zoneinfo; zoneinfo.ZoneInfo('Europe/Berlin')"
+    && python -c "import pandas, openpyxl, odf, docx, pypdf, PIL, yaml, pydantic, zoneinfo; zoneinfo.ZoneInfo('Europe/Berlin')"
 COPY sandbox/sitecustomize.py /usr/local/lib/python3.12/site-packages/sitecustomize.py
-COPY sandbox/ws.py /usr/local/lib/python3.12/site-packages/ws.py
+COPY sandbox/ws /usr/local/lib/python3.12/site-packages/ws
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

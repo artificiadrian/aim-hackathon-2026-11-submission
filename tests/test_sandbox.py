@@ -242,9 +242,10 @@ def test_passes_the_helpers_cite_every_format_with_its_locator(box: TaskSandbox,
     run_ok(box, rec, HELPER_FILES)
     code = (
         "import json\n"
-        "print(json.dumps([cite('/tmp/a.xlsx', 'TOK-2', column='token'), cite('/tmp/a.docx', '48 hours'),"
+        "found = [cite('/tmp/a.xlsx', 'TOK-2', column='token'), cite('/tmp/a.docx', '48 hours'),"
         " cite('/tmp/a.odt', 'Ada'), cite('/tmp/a.json', 'X-2'), cite('/tmp/a.jsonl', 'devops-07'),"
-        " cite('/tmp/r.csv', 'ext, partner'), cite('/logs/access/requests.csv', 'R-2', 'id')]))"
+        " cite('/tmp/r.csv', 'ext, partner'), cite('/logs/access/requests.csv', 'R-2', 'id')]\n"
+        "print(json.dumps([[s.model_dump(exclude_none=True) for s in f] for f in found]))"
     )
     assert json.loads(run_ok(box, rec, code)) == [
         [{"path": "/tmp/a.xlsx", "sheet": "Alerts", "row": 5}],
@@ -257,6 +258,12 @@ def test_passes_the_helpers_cite_every_format_with_its_locator(box: TaskSandbox,
     ]
     shown = run_ok(box, rec, "print(text('/tmp/a.xlsx'))")
     assert "sheet=Alerts row=5| A-2 | TOK-2 | closed (hidden row)" in shown
-    hits = run_ok(box, rec, "print([(h['path'], h.get('line')) for h in grep('devops-07', '/tmp')])")
-    assert hits == "[('/tmp/a.jsonl', 2)]"
+    hits = run_ok(box, rec, "print([str(h) for h in grep('devops-07', '/tmp')])")
+    assert hits == """['/tmp/a.jsonl line=2| {"agent": "devops-07"}']"""
+    submitted = box.run(rec, "submit('OK', 1, sources=grep('devops-07', '/tmp') + cite('/tmp/a.json', 'X-1'))")
+    assert submitted.submitted is not None
+    assert json.loads(submitted.submitted)["sources"] == [
+        {"path": "/tmp/a.jsonl", "line": 2},
+        {"path": "/tmp/a.json", "record": "X-1"},
+    ]
     assert run_ok(box, rec, "print(sh('grep -c R- /logs/access/requests.csv').strip())") == "2"

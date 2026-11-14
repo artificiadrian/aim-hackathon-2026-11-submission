@@ -55,8 +55,8 @@ docker run --rm --env-file .env -v "$PWD/src:/app/src" -v "$PWD/runs:/app/runs" 
 
 ## Cost
 
-- The dev key has $15 for the whole day. A full 48-task run costs a large share: ask the user before one. Test on
-  subsets and on recorded runs first.
+- Dev calls are no longer budget-limited (a new key, 2026-11-14 afternoon): test with real model calls, not fakes.
+  The final run's cost still counts for half the score.
 - Cost is half the score. Prefer local parsing and code over model calls.
 - Every run, experiment or subagent that calls a model has a hard spend cap: stop calling models once it is reached.
 
