@@ -7,9 +7,9 @@ import json
 import os
 from collections.abc import Callable
 from pathlib import Path
-from typing import cast
+from typing import ClassVar, cast
 
-from pydantic import BaseModel, JsonValue, ValidationError
+from pydantic import BaseModel, ConfigDict, JsonValue, ValidationError
 
 from ws.files import TABLES, files_under, parts, read, resolve
 from ws.formats import JSON, units
@@ -125,28 +125,52 @@ def table_rows(values: list[str], root: Path):
 WORKSPACE = Path("/")
 
 
-def citation_notes(sources: list[Source], answer: JsonValue, root: Path = WORKSPACE):
-    """What is wrong with the citations, checked against the files: units that do not exist, and answer values that
-    no cited unit holds but a table row does (a lookup table the answer used and did not cite, or a wrong row).
-    Values found in no table (counts, computed values) are not reported. Empty when all is fine."""
-    notes: list[str] = []
+class Checked(BaseModel):
+    """The citations after the certain fixes, and what is left for the model to fix."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True)
+
+    sources: tuple[Source, ...]
+    added: tuple[Source, ...] = ()  # the one table row that holds an answer value no cited unit held
+    dropped: tuple[Source, ...] = ()  # cited units that do not exist, left out while other citations remain
+    notes: tuple[str, ...] = ()  # what only the model can fix: the harness sends the submission back once
+
+
+def check_citations(sources: list[Source], answer: JsonValue, root: Path = WORKSPACE):
+    """The citations checked against the files, fixed in code where the fix is certain (no extra model call): a cited
+    unit that does not exist is left out while other citations remain, and an answer value that no cited unit holds
+    is cited by its table row when exactly one row in the workspace holds it. The rest becomes notes: a missing unit
+    that is the only citation, and values that several rows hold. Values in no table (counts, computed values) are
+    not reported. Over-citing costs points (docs/ARENA_DOCS.md), so nothing is added on a guess."""
     texts: list[str] = []
+    kept: list[Source] = []
+    gone: list[Source] = []
     for source in sources:
         unit = read(source)
         if unit is None:
-            notes.append(f"{source} does not exist (check the path and the locator; text(path) shows them)")
-        elif source.locators:
+            gone.append(source)
+            continue
+        kept.append(source)
+        if source.locators:
             texts.append(unit.casefold())
+    notes = [f"{s} does not exist (check the path and the locator; text(path) shows them)" for s in gone if not kept]
     values = list(dict.fromkeys(answer_values(answer)))
     missing = [v for v in values if not any(v in t for t in texts)][:HINT_VALUES]
-    hints = [(v, rows) for v, rows in table_rows(missing, root).items() if rows]
+    found = table_rows(missing, root)
+    added = list(dict.fromkeys(rows[0] for rows in found.values() if len(rows) == 1 and rows[0] not in kept))
+    hints = [(v, rows) for v, rows in found.items() if len(rows) > 1]
     if hints:
         listed = "\n".join(f"  {v}: " + ", ".join(str(s) for s in rows) for v, rows in hints)
         head = "answer values that no cited unit holds, and the table rows that hold them:"
         notes.append(
             f"{head}\n{listed}\ncite each row your answer used (lookup tables too); leave out rows it did not use"
         )
-    return notes
+    return Checked(
+        sources=(*kept, *added) if kept or added else tuple(gone),
+        added=tuple(added),
+        dropped=tuple(gone) if kept else (),
+        notes=tuple(notes),
+    )
 
 
 def submit(outcome: str, answer: object = None, sources: object = (), actions: object = ()):
@@ -157,8 +181,18 @@ def submit(outcome: str, answer: object = None, sources: object = (), actions: o
         raise NoHarness
     value = JSON.validate_json(json.dumps(answer, default=plain))  # any script value, parsed once into JSON
     cited, notes = as_sources(sources)
-    notes += citation_notes(cited, value)
-    payload = {"outcome": outcome, "answer": value, "sources": cited, "actions": actions, "notes": notes}
+    checked = check_citations(cited, value)
+    for source in checked.added:
+        print(f"submit: cited {source} too: it holds an answer value no cited unit held")
+    for source in checked.dropped:
+        print(f"submit: left out {source}: no such unit")
+    payload = {
+        "outcome": outcome,
+        "answer": value,
+        "sources": list(checked.sources),
+        "actions": actions,
+        "notes": [*notes, *checked.notes],
+    }
     line = json.dumps(payload, default=plain, ensure_ascii=False) + "\n"
     os.write(int(os.environ["SUBMIT_FD"]), line.encode("utf-8"))
     print("submit(...) received; the harness checks it when this script ends.")

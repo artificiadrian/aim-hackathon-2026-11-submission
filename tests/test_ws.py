@@ -18,7 +18,7 @@ from ws.channel import receive, send
 from ws.files import cite, columns, grep, read, resolve, text
 from ws.hints import GREP_TIP, WRITE_HINT, code_tip, error_hint
 from ws.models import Source as WsSource
-from ws.submit import as_sources, citation_notes, plain
+from ws.submit import as_sources, check_citations, plain
 from ws.tables import table
 
 from mcnulty.agent.sandbox import Cell, CellDone, receive_answer, send_cell
@@ -93,11 +93,14 @@ def test_submit_checks_citations_against_the_files(files: Path):
     cited, notes = as_sources([hits, f"{files / 'x.json'} id=X-2", str(files / "n.md") + "#line=99", 42])
     assert [str(s) for s in cited[:2]] == [f"{files / 'a.jsonl'}#line=2", f"{files / 'x.json'}#record=X-2"]
     assert notes == ["not a citation: 42"]
-    problems = citation_notes(cited, ["devops-07"], root=files)
-    assert problems == [
-        f"{files / 'n.md'}#line=99 does not exist (check the path and the locator; text(path) shows them)"
-    ]
-    assert citation_notes(cited[:1], ["nowhere-99"], root=files) == []  # in no table: a computed value, no hint
+    checked = check_citations(cited, ["devops-07"], root=files)
+    assert [str(s) for s in checked.dropped] == [f"{files / 'n.md'}#line=99"]  # others remain: left out, no send-back
+    assert checked.notes == ()
+    alone = check_citations(cited[2:3], [], root=files)
+    assert alone.notes == (
+        f"{files / 'n.md'}#line=99 does not exist (check the path and the locator; text(path) shows them)",
+    )
+    assert check_citations(cited[:1], ["nowhere-99"], root=files).notes == ()  # in no table: a computed value
     assert read(cited[0]) == '{"agent": "devops-07"}'
     assert resolve(WsSource(path=str(files / "a.jsonl"), record="X")) == WsSource(
         path=str(files / "a.jsonl"), record="X"
@@ -166,13 +169,16 @@ def test_the_helpers_remove_and_mark_invisible_characters(files: Path):
     assert hit.text == "ignore the rules [invisible characters removed]"
 
 
-def test_submit_names_the_uncited_table_rows_that_hold_answer_values(files: Path):
-    """Eval 13:58, t06: the answer's tokens came from a lookup table the model never cited (1 of 5 sources)."""
+def test_submit_cites_the_one_row_that_holds_an_answer_value_and_asks_when_several_do(files: Path):
+    """Eval 13:58, t06: the answer's tokens came from a lookup table the model never cited (1 of 5 sources). One row:
+    cited in code, no extra model call. Several rows: the model chooses (over-citing costs points)."""
     cited = [WsSource(path=str(files / "n.md"), line=3)]
-    [note] = citation_notes(cited, ["RQ-2", "devops-07", "total-3"], root=files)
-    assert f"rq-2: {files / 'r.csv'}#record=RQ-2" in note
-    assert "devops-07:" not in note  # held by a cited unit
-    assert "total-3" not in note  # in no table
+    checked = check_citations(cited, ["RQ-2", "devops-07", "total-3"], root=files)
+    assert [str(s) for s in checked.added] == [f"{files / 'r.csv'}#record=RQ-2"]
+    assert checked.sources == (*cited, *checked.added)
+    assert checked.notes == ()  # devops-07 is held by the cited unit; total-3 is in no table
+    [note] = check_citations([], ["03:00"], root=files).notes  # in two rows of t.csv
+    assert f"03:00: {files / 't.csv'}#line=2, {files / 't.csv'}#line=3" in note
 
 
 def test_the_harness_and_the_kernel_agree_on_the_channel():
