@@ -208,6 +208,6 @@ def solution(args: SubmitArgs, gate: Gate, steps: int):
     defanged and vetted."""
     actions = tuple(vet(a, gate) for a in args.actions) if args.outcome == "OK" else ()
     cited = tuple(s for s in args.sources if s.path in gate.paths)
-    sources = fixed_sources(cited, gate.records, gate.instruction, gate.paths)
+    sources = fixed_sources(cited, gate.records)
     submission = Submission(outcome=args.outcome, answer=clean_answer(args.answer), sources=sources)
     return Solution(submission=submission, actions=actions, steps=steps)

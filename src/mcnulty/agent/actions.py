@@ -12,10 +12,7 @@ from pydantic import AfterValidator, Field
 
 from mcnulty.agent.guards import (
     Finding,
-    FindingKind,
-    Scope,
     defang_urls,
-    not_asked,
     outgoing_findings,
     unverified_recipient,
 )
@@ -96,21 +93,7 @@ class Gate(Frozen):
     paths: frozenset[str]  # workspace files: the only valid source paths
     verified: frozenset[str]  # recipient addresses
     rules: tuple[str, ...]  # operator texts that must not be copied out
-    scope: Scope  # the actions the task asks for
-    instruction: str  # for citations of the request itself (``citations.fixed_sources``)
     records: dict[str, dict[int, str]]  # csv path -> physical line -> record id, for files with a unique first column
-
-
-def op_target(op: "ContainmentOp"):
-    match op:
-        case QuarantineAgent() | ReleaseAgent():
-            return op.agent
-        case RevokeToken() | RotateToken():
-            return op.token
-        case BlockDomain():
-            return op.domain
-        case AddNote():
-            return None
 
 
 class VettedAction(Frozen):
@@ -145,34 +128,23 @@ def verified_contacts(contacts_csv: str):
 
 
 def vet(action: Action, gate: Gate):
-    """Defang outgoing text and check it: asked for by the task, recipient verified, no token values, no long copies
-    of the rules. Containment ops the task does not ask for are dropped (with a finding); none left blocks it."""
+    """Defang outgoing text and check it: recipient verified (when there is a contact list), no token values, no long
+    copies of the rules."""
     match action:
         case SendMessage():
             defanged = {"subject": defang_urls(action.subject), "body": defang_urls(action.body)}
             action = action.model_copy(update=defanged)
             text = f"{action.subject}\n{action.body}"
-            findings = (
-                (() if gate.scope.allows("send_message") else not_asked("send_message"))
-                + unverified_recipient(action.to, gate.verified)
-                + outgoing_findings(text, gate.rules, frozenset())
-            )
+            recipient = unverified_recipient(action.to, gate.verified) if gate.verified else ()
+            findings = recipient + outgoing_findings(text, gate.rules, frozenset())
         case WriteDraft():
             action = action.model_copy(update={"content": defang_urls(action.content)})
-            findings = (() if gate.scope.allows("write") else not_asked("write")) + outgoing_findings(
-                action.content, gate.rules, frozenset()
-            )
+            findings = outgoing_findings(action.content, gate.rules, frozenset())
         case Containment():
             ops = tuple(
                 op.model_copy(update={"text": defang_urls(op.text)}) if isinstance(op, AddNote) else op
                 for op in action.ops
             )
             action = action.model_copy(update={"ops": ops})
-            kept = tuple(op for op in ops if gate.scope.allows(op.op))
-            dropped = tuple(
-                f for op in ops if op not in kept for f in not_asked(op.op, op_target(op), FindingKind.OP_DROPPED)
-            )
-            findings = dropped if kept else (*dropped, *not_asked("containment"))
-            if kept:
-                action = action.model_copy(update={"ops": kept})
+            findings = ()
     return VettedAction(action=action, findings=findings)

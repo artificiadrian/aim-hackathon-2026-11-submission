@@ -3,17 +3,12 @@
 - csv: the platform matches ``record`` (the first column). Models cite the line they printed; a line becomes the
   record that starts or ends on it when the first column is a unique id. Files whose first column repeats (a time
   column) stay cited by line.
-- inbox: a task that handles an inbox message rests on that message, whatever the outcome (33 of 33 such dev tasks
-  cite it), so its files are cited when the model did not.
 """
 
 import csv
 import io
-import re
 
 from mcnulty.clients.arena import Source
-
-INBOX_TASK = re.compile(r"\binbox\b", re.IGNORECASE)
 
 
 def line_records(text: str):
@@ -41,15 +36,6 @@ def as_record(source: Source, records: dict[str, dict[int, str]]):
     return Source(path=source.path, record=lines[source.line])
 
 
-def fixed_sources(
-    sources: tuple[Source, ...],
-    records: dict[str, dict[int, str]],
-    instruction: str,
-    paths: frozenset[str],
-):
-    """Sources with csv lines as records and the inbox message added for inbox tasks; duplicates removed."""
-    fixed = [as_record(s, records) for s in sources]
-    if INBOX_TASK.search(instruction):
-        cited = {s.path for s in fixed}
-        fixed += [Source(path=p) for p in sorted(paths) if p.startswith("/inbox/") and p not in cited]
-    return tuple(dict.fromkeys(fixed))
+def fixed_sources(sources: tuple[Source, ...], records: dict[str, dict[int, str]]):
+    """Sources with csv lines as records; duplicates removed."""
+    return tuple(dict.fromkeys(as_record(s, records) for s in sources))

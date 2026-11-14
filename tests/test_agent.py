@@ -152,20 +152,13 @@ def test_csv_lines_become_records_only_when_the_first_column_is_unique():
         Source(path="/archive.csv", line=3),
         Source(path="/r.csv", record="RQ-3"),  # a duplicate after conversion
     )
-    fixed = fixed_sources(sources, records, "count the requests", frozenset())
+    fixed = fixed_sources(sources, records)
     assert fixed == (
         Source(path="/r.csv", record="RQ-1"),
         Source(path="/r.csv", record="RQ-2"),
         Source(path="/r.csv", record="RQ-3"),
         Source(path="/archive.csv", line=3),
     )
-
-
-def test_an_inbox_task_cites_its_message():
-    paths = frozenset({"/inbox/mail_0412.md", "/contacts.csv"})
-    fixed = fixed_sources((), {}, "There is one new message in /inbox/. Deal with it.", paths)
-    assert fixed == (Source(path="/inbox/mail_0412.md"),)
-    assert fixed_sources((), {}, "Which agents leaked tokens?", paths) == ()
 
 
 def test_the_prompt_names_every_submit_field_and_action_form():

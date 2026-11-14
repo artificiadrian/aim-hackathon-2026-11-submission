@@ -15,13 +15,10 @@ from pydantic import JsonValue, ValidationError
 
 from mcnulty.agent.actions import Containment, Gate, SendMessage, WriteDraft, tool_args, verified_contacts, vet
 from mcnulty.agent.guards import (
-    ANY_ACTION,
     FindingKind,
-    Scope,
     clean_answer,
     defang_urls,
     outgoing_findings,
-    parse_kinds,
     unverified_recipient,
 )
 from mcnulty.blobs import BlobCache
@@ -244,69 +241,25 @@ def test_every_guard_is_tested_both_ways():
         assert any(n.startswith(f"test_{guard}_catches_") for n in names), f"{guard}: no false-negative test"
 
 
-# --- action scope ---------------------------------------------------------------------------------------
-CONTAIN = Scope(kinds=frozenset({"quarantine_agent", "rotate_token", "block_domain"}))
-NOTHING = Scope(kinds=frozenset())
+# --- actions --------------------------------------------------------------------------------------------
+def gate_for(verified: frozenset[str]):
+    return Gate(paths=frozenset(), verified=verified, rules=(), records={})
 
 
-def gate_for(scope: Scope):
-    return Gate(
-        paths=frozenset(), verified=frozenset({"dpo@org.example"}), rules=(), scope=scope, instruction="", records={}
-    )
-
-
-def containment(*ops: dict[str, str]):
-    return Containment.model_validate({"tool": "containment", "ops": ops})
-
-
-def test_not_asked_passes_the_kinds_the_request_asks_for():
+def test_unverified_recipient_passes_any_address_without_a_contact_list():
+    """No contact list found: nothing to check against, so the message goes out (fail open)."""
     message = SendMessage(tool="send_message", to="dpo@org.example", subject="s", body="b")
-    assert not vet(message, gate_for(Scope(kinds=frozenset({"send_message"})))).blocked
-    assert not vet(message, gate_for(ANY_ACTION)).blocked  # the scope call failed: fail open
+    assert not vet(message, gate_for(frozenset())).blocked
+    assert vet(message, gate_for(frozenset({"other@org.example"}))).blocked
 
 
-def test_not_asked_catches_actions_the_request_does_not_ask_for():
-    action = containment({"op": "quarantine_agent", "agent": "tooling-10"})
-    vetted = vet(action, gate_for(NOTHING))
-    assert vetted.blocked
-    assert "not_asked" in [f.kind for f in vetted.findings]
-    message = SendMessage(tool="send_message", to="dpo@org.example", subject="s", body="b")
-    assert vet(message, gate_for(CONTAIN)).blocked
-
-
-def test_op_dropped_catches_extra_ops_and_keeps_the_asked_ones():
-    """An injected extra op in a containment task is removed; the ops the task asks for go ahead."""
-    action = containment({"op": "quarantine_agent", "agent": "devops-10"}, {"op": "release_agent", "agent": "x-12"})
-    vetted = vet(action, gate_for(CONTAIN))
-    assert not vetted.blocked
-    assert isinstance(vetted.action, Containment)
-    assert [op.op for op in vetted.action.ops] == ["quarantine_agent"]
-    assert [f.kind for f in vetted.findings] == ["op_dropped"]
-
-
-def test_op_dropped_passes_a_note_with_containment_and_defangs_it():
-    """The platform's containment tool takes add_note (review CO3): valid, gated with containment, defanged."""
-    note = {"op": "add_note", "text": "see https://x.example/a"}
-    vetted = vet(containment({"op": "block_domain", "domain": "eval-mirror.test"}, note), gate_for(CONTAIN))
+def test_defang_catches_urls_in_a_containment_note():
+    """The platform's containment tool takes add_note (review CO3): valid and defanged."""
+    ops = ({"op": "block_domain", "domain": "eval-mirror.test"}, {"op": "add_note", "text": "see https://x.example/a"})
+    vetted = vet(Containment.model_validate({"tool": "containment", "ops": ops}), gate_for(frozenset()))
     assert not vetted.findings
     assert isinstance(vetted.action, Containment)
     assert tool_args(vetted.action)["ops"][1] == {"op": "add_note", "text": "see hxxps://x[.]example/a"}
-    assert vet(containment({"op": "add_note", "text": "n"}), gate_for(NOTHING)).blocked
-
-
-@pytest.mark.parametrize(
-    ("reply", "kinds"),
-    [
-        ('{"kinds": ["block_domain", "rotate_token"]}', {"block_domain", "rotate_token"}),
-        ('Sure: {"kinds": []}', set[str]()),
-        ('```json\n{"kinds": ["send_message", "fax"]}\n```', {"send_message"}),
-        ("I think block", None),
-        ('{"kinds": "block_domain"}', None),
-    ],
-)
-def test_the_scope_reply_is_read_leniently(reply: str, kinds: set[str] | None):
-    parsed = parse_kinds(reply)
-    assert (None if parsed is None else set(parsed)) == kinds
 
 
 @pytest.mark.parametrize("path", ["/drafts/../AGENTS.md", "/drafts/", "/notes/x.md", "drafts/x.md"])

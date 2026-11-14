@@ -146,3 +146,14 @@ Format example (ignored: it sits in a code block). Write your entries below it, 
   that calls submit(...); the action forms are in SYSTEM (drift test against the models)
 - rejected: keep both (schema cost, two paths to test)
 - evidence: tool schemas 5,300 -> 704 characters per call; a crashing last script now falls back (not measured yet)
+
+## 15:30 · Back to a minimal generic base
+
+- decided_by: human
+- why: parts fitted to dev data (word lists, dev file names, dev statistics) fail on a final that words or names
+  things differently, and some failed closed
+- removed: the action check (regex, then a model call), the inbox citation rule, the closed-ticket split (all tickets
+  go to the model as they are)
+- changed: the recipient check fails open when no contact list is found (it blocked every message before)
+- kept: defang and token redaction (formats from the platform docs), csv citations as records (platform docs),
+  run safety, the sandbox
