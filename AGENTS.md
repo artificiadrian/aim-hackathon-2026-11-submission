@@ -31,12 +31,14 @@ uv run ruff check --fix && uv run ruff format && uv run basedpyright && uv run p
 ```
 
 The sandbox (`src/mcnulty/agent/sandbox.py`) works only inside the Docker image, so anything that runs model code runs
-there. Mounting `src/` means a code change needs no rebuild; rebuild after a dependency or `Dockerfile` change.
+there. Mounting `src/` and the `ws` helpers means a code change needs no rebuild; rebuild after a dependency or
+`Dockerfile` change.
 
 ```bash
 docker build -t mcnulty .
-docker run --rm -v "$PWD/src:/app/src" -v "$PWD/tests:/app/tests" --entrypoint uv mcnulty run --frozen pytest tests/test_sandbox.py
-docker run --rm --env-file .env -v "$PWD/src:/app/src" -v "$PWD/runs:/app/runs" -v "$PWD/.cache:/app/.cache" \
+WS=(-v "$PWD/packages/sandbox/src/ws:/usr/local/lib/python3.12/site-packages/ws:ro")
+docker run --rm -v "$PWD/src:/app/src" -v "$PWD/tests:/app/tests" "${WS[@]}" --entrypoint uv mcnulty run --frozen pytest tests/test_sandbox.py
+docker run --rm --env-file .env -v "$PWD/src:/app/src" -v "$PWD/runs:/app/runs" -v "$PWD/.cache:/app/.cache" "${WS[@]}" \
   --entrypoint mcnulty mcnulty eval runs/<collect run> --max-usd 0.10 --tasks t01
 ```
 
