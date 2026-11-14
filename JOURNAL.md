@@ -289,3 +289,16 @@ Format example (ignored: it sits in a code block). Write your entries below it, 
 - rejected: the definition inside the per-line question (64 routine posts flagged on one board: the question
   goes into the state, each line gets a short question); a word gate (25 analysis requests match "send")
 - evidence: tests/test_jev.py (4 offline, 1 live); host checks pass
+
+## 16:40 · Over-citing: an estimated cut in the grader, a narrower sources line in the prompt
+
+- decided_by: both
+- why: live 20261114T133127Z t40 cited 8 for 4 expected and got sources_score 0.75 with 4/4 hits; the local grader
+  has no cut, and 17 of 56 final submissions in the 8 newest evals cite more than expected + 2 (t04 54 for 3, t05
+  6-8 for 2 in every eval); the replay shows `located` adds no case (docs/research/2026-11-14-over-citing.md)
+- decision: the grader keeps `score` and adds `sources_cited` and `score_est` (a 0.25 sources cut when cited >
+  expected + 2, the rule that fits all live grades); the prompt asks for the units that hold the answer items plus
+  the one lookup-table row each item was matched on, each unit once
+- rejected: a cap on citations in code (the expected count is unknown at submit time)
+- evidence: tests/test_eval.py::test_grade_estimates_the_over_citing_cut; host checks pass; the real rule comes
+  from the next live run's feedback

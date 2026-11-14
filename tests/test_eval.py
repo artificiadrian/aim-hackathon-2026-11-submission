@@ -37,6 +37,24 @@ def test_grade_applies_the_platform_formula():
     assert grade(Solution(submission=refused), expected).score == 0.0
 
 
+def test_grade_estimates_the_over_citing_cut():
+    """Live 20261114T133127Z: t40 cited 8 for 4 expected, 4/4 hits, sources_score 0.75; t08 cited 6 for 4, 1.0."""
+    expected = TaskStatus(
+        task_id="t40",
+        expected_outcome="OK",
+        expected_answer=["a"],
+        expected_sources=[{"path": "/r.csv", "record": f"R-{i}"} for i in range(4)],
+    )
+
+    def cited(n: int):
+        sources = tuple(Source(path="/r.csv", record=f"R-{i}") for i in range(n))
+        return grade(Solution(submission=Submission(outcome="OK", answer=["a"], sources=sources)), expected)
+
+    eight = cited(8)
+    assert (eight.score, eight.score_est, eight.sources_cited) == (1.0, 0.925, 8)
+    assert cited(6).score_est == 1.0
+
+
 def test_grade_compares_actions_with_an_action_shaped_answer():
     op = RotateToken(op="rotate_token", token="TOK-1", at="2026-11-14T12:00:00Z")  # noqa: S106 - a token id
     rotate = Containment(tool="containment", ops=(op,))

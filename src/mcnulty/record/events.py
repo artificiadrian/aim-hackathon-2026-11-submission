@@ -174,6 +174,8 @@ class TaskScored(Frozen):
     sources_hit: int
     sources_expected: int
     score: float
+    sources_cited: int = 0  # distinct citations submitted
+    score_est: float = 0.0  # score with the guessed over-citing cut (``grading.OVER_CITED_MARGIN``); 0 in older runs
     steps: int = 0  # model steps of the loop
     calls: int = 0  # model calls, vision included
     prompt_tokens: int = 0

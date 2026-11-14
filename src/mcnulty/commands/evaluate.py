@@ -96,7 +96,8 @@ def run_eval(rec: Recorder, llm: OpenRouterClient, blobs: BlobCache, saved: Save
         line = (
             f"{task_id} L{task.level} {scored.outcome}/{scored.expected_outcome}",
             f"answer={scored.answer_score:.2f} sources={scored.sources_hit}/{scored.sources_expected}",
-            f"score={scored.score:.2f} {time.time() - t0:.0f}s steps={solution.steps} calls={spent.calls}",
+            f"cited={scored.sources_cited} score={scored.score:.2f} est={scored.score_est:.2f}",
+            f"{time.time() - t0:.0f}s steps={solution.steps} calls={spent.calls}",
             f"${spent.total:.4f} (run ${llm.tracker.total:.4f})",
         )
         print(" ".join(line))

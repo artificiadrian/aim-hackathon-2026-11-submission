@@ -13,7 +13,10 @@ outcome is right. The platform's partial credit is not published, so this is an 
   ``{"action": "send_message", "to": ..., "must_mention": [...]}``): the proposed actions that pass the checks are
   turned into that shape (``action_view``); each item of a value counts as mentioned when its text (numbers also
   with thousands separators) is in the message or draft;
-- constraints (the platform's action checks) are not graded.
+- constraints (the platform's action checks) are not graded;
+- over-citing: the platform cuts the sources score when a task cites too much (live 20261114T133127Z t40: 8 cited
+  for 4 expected, 4/4 hits, sources_score 0.75). The rule is not published; "cited > expected + 2" fits all live
+  grades (docs/research/2026-11-14-over-citing.md). ``score`` has no cut; ``score_est`` applies the guessed one.
 """
 
 import json
@@ -26,6 +29,8 @@ from mcnulty.clients.arena import Source, TaskStatus
 from mcnulty.record.events import TaskScored
 
 LINE_TOLERANCE = 2
+OVER_CITED_MARGIN = 2  # guessed from one live grade: a cut when distinct citations > expected + this
+OVER_CITED_CUT = 0.25  # of the sources score (live t40)
 
 
 def canonical(value: JsonValue):
@@ -128,6 +133,8 @@ def grade(solution: Solution, expected: TaskStatus):
     answer = answer_score(action_view(solution, expected.expected_answer), expected.expected_answer)
     right = submission.outcome == expected.expected_outcome
     sources = hits / len(wanted) if wanted else 1.0
+    cited = len({s.model_dump_json() for s in submission.sources})
+    cut = OVER_CITED_CUT if wanted and cited > len(wanted) + OVER_CITED_MARGIN else 0.0
     return TaskScored(
         expected_outcome=expected.expected_outcome,
         outcome=submission.outcome,
@@ -135,4 +142,6 @@ def grade(solution: Solution, expected: TaskStatus):
         sources_hit=hits,
         sources_expected=len(wanted),
         score=round(answer * (0.7 + 0.3 * sources), 4) if right else 0.0,
+        sources_cited=cited,
+        score_est=round(answer * (0.7 + 0.3 * max(0.0, sources - cut)), 4) if right else 0.0,
     )

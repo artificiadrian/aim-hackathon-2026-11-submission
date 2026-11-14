@@ -71,8 +71,9 @@ submit(outcome="OK", answer=answer, sources=list(denied["_source"]) + list(admin
 submit(outcome, answer, sources, actions=[]):
 - outcome: "OK", "DENIED_SECURITY", "NEEDS_CLARIFICATION" or "UNSUPPORTED", as the rules define them. answer: the \
 value in the format the task asks, or the answer the rules give for that outcome.
-- sources: one citation for each unit an answer item rests on, in every file you used (lookup tables too); for a \
-refusal, the request and the units that prove the refusal. Pass "_source" values, grep hits and cite(...) results, \
+- sources: the units that hold the answer items, plus the one lookup-table row each item was matched on; for a \
+refusal, the request and the units that prove the refusal. Cite each unit once; files you only read on the way \
+stay out. Pass "_source" values, grep hits and cite(...) results, \
 or write each one as it prints: "/data/users.csv#record=U-7" (a csv row by its first column), \
 "/logs/app.jsonl#line=42", "/notes/plan.md#line=8", "/book.xlsx#sheet=alerts&row=9", "/memo.docx#paragraph=4", \
 "/scan.pdf#page=2", "/config.json" and "/photo.png" (by path). submit checks each citation and shows problems \
