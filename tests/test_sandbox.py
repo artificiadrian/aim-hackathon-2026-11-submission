@@ -407,7 +407,7 @@ def test_passes_the_system_prompt_example_runs_as_written(rec: Recorder, tmp_pat
     files = {
         "/data/users.csv": b"id,role\nU-7,admin\nU-8,user\n",
         "/logs/logins.jsonl": b'{"ts": "t1", "user": "U-7", "result": "denied"}\n'
-        b'{"ts": "t2", "user": "U-8", "result": "ok"}\n',
+        + b'{"ts": "t2", "user": "U-8", "result": "ok"}\n',
     }
     blobs = BlobCache(root=tmp_path / "blobs")
     for data in files.values():
