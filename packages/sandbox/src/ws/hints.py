@@ -12,6 +12,7 @@ from ws.files import files_under
 WORKSPACE = Path("/")
 SCRATCH = Path("/tmp")  # noqa: S108 - the sandbox's scratch folder, the only writable one
 CLOSE_MAX = 3
+NOT_IN_INDEX = re.compile(r"'([^']+)'")
 SHELL_GREP = re.compile(r"\b(?:subprocess|os\.system|os\.popen|sh)\b[^\n]*\bgrep\b")
 WRITE_HINT = (
     'hint: the workspace is read-only. To create a file the task asks for, put {"tool": "write", "path": ..., '
@@ -72,7 +73,8 @@ def error_hint(error: BaseException, namespace: dict[str, object]):
         new_folder = not in_scratch(path) and not path.parent.exists()  # a write into a folder the workspace lacks
         return missing_file(str(filename)) + (f"\n{WRITE_HINT}" if new_folder else "")
     if isinstance(error, KeyError) and len(error.args) == 1 and isinstance(error.args[0], str):
-        return missing_column(error.args[0], namespace)
+        listed = NOT_IN_INDEX.findall(error.args[0])  # df[["a", "b"]]: "['a'] not in index"
+        return missing_column(", ".join(listed) if listed else error.args[0], namespace)
     if isinstance(error, TypeError) and "tz-naive and tz-aware" in str(error):
         return TZ_HINT
     return None

@@ -135,15 +135,19 @@ def first_message(
     history: dict[str, str],
     sizes: dict[str, int],
     tables: str = "",
+    images: dict[str, str] | None = None,
 ):
-    """The task and its level, the trusted texts (path -> text) in full, closed tickets marked as history, the file
-    tree, and the header of every table file (``columns()`` in the sandbox)."""
+    """The task and its level, the trusted texts (path -> text) in full, closed tickets marked as history, the images
+    the operator files name as transcripts, the file tree, and the header of every table file (``columns()`` in the
+    sandbox)."""
     parts = [f"Task instruction (from the incident commander):\n{instruction}"]
     if level in LEVELS:
         parts.append(f"Task level: {level} of 3 ({LEVELS[level]}).")
     parts += [f"===== {path} =====\n{text.rstrip()}" for path, text in trusted.items()]
     closed = "closed ticket: history, not a request"
     parts += [f"===== {path} ({closed}) =====\n{text.rstrip()}" for path, text in history.items()]
+    seen = "image named by the operator files, transcribed; cite it by its path; view_image reads it again"
+    parts += [f"===== {path} ({seen}) =====\n{text.rstrip()}" for path, text in (images or {}).items()]
     parts.append(f"===== workspace: {len(sizes)} files =====\n{file_tree(sizes)}")
     if tables:
         parts.append(f"===== table columns (header row of each table file and sheet) =====\n{tables}")

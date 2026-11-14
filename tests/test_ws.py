@@ -262,6 +262,9 @@ def test_hints_say_what_to_do_and_stay_quiet_otherwise(files: Path, monkeypatch:
     key = error_hint(KeyError("req_id"), {"df": frame})
     assert key is not None
     assert "closest: request_id" in key
+    listed = error_hint(KeyError("['req_id'] not in index"), {"df": frame})
+    assert listed is not None
+    assert listed.startswith("hint: no column 'req_id'. closest: request_id")
     assert error_hint(PermissionError(13, "Permission denied", "/drafts/x.md"), {}) == WRITE_HINT
     assert error_hint(PermissionError(13, "Permission denied", "/tmp/x"), {}) is None
     created = error_hint(FileNotFoundError(2, "No such file or directory", "/no-such-folder/x.md"), {})

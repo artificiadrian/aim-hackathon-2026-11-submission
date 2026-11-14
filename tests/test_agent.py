@@ -6,7 +6,7 @@ from pathlib import Path
 
 from mcnulty.agent.actions import Gate
 from mcnulty.agent.citations import fixed_sources, line_records
-from mcnulty.agent.loop import TaskFiles, closed, named, queue_folders
+from mcnulty.agent.loop import TaskFiles, closed, named, named_images, queue_folders
 from mcnulty.agent.prompt import (
     OLD_OUTPUT_MAX,
     OUTPUT_MAX,
@@ -255,3 +255,25 @@ def test_a_blocked_action_is_told_to_the_model():
     assert "token_value" in blocked_message(solution(args, gate, 1))
     fine = parse_submit(json.dumps({"outcome": "OK", "answer": 1, "actions": [message | {"body": "rotated"}]}))
     assert blocked_message(solution(fine, gate, 1)) == ""
+
+
+def test_images_the_operator_files_name_are_transcribed_into_the_first_message(tmp_path: Path):
+    """Eval reviews 2026-11-14: about 30 % of tasks read the image the runbook names with view_image, every task
+    again (docs/research/2026-11-14-fewer-model-calls.md, P2)."""
+    blobs = BlobCache(root=tmp_path)
+    texts = {
+        "/AGENTS.md": b"Follow /runbook.md.",
+        "/runbook.md": b"The standing order is /orders/standing.jpg.",
+        "/orders/standing.jpg": b"\xff\xd8\xff\xe0JFIF",
+        "/orders/other.png": b"\x89PNG",
+    }
+    files = {path: hashlib.sha256(data).hexdigest() for path, data in texts.items()}
+    for path, data in texts.items():
+        blobs.put(files[path], data)
+    assert named_images(files, blobs) == ["/orders/standing.jpg"]
+    loaded = TaskFiles.load(files, blobs, frozenset(), {"/orders/standing.jpg": "Rotate every token at 03:00."})
+    assert loaded.images == {"/orders/standing.jpg": "Rotate every token at 03:00."}
+    assert "/orders/standing.jpg" not in loaded.trusted  # shown, but not an operator file
+    message = first_message("Task.", 1, loaded.trusted, loaded.history, loaded.sizes, "", loaded.images)
+    assert "===== /orders/standing.jpg (image named by the operator files, transcribed" in message
+    assert "Rotate every token at 03:00." in message

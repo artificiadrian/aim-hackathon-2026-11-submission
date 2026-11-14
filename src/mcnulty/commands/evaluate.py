@@ -10,7 +10,7 @@ from pathlib import Path
 
 from pydantic import Field
 
-from mcnulty.agent.loop import solve
+from mcnulty.agent.loop import Transcripts, solve
 from mcnulty.agent.sandbox import SandboxPool
 from mcnulty.agent.submit import FALLBACK
 from mcnulty.blobs import BlobCache
@@ -69,6 +69,7 @@ def run_eval(rec: Recorder, llm: OpenRouterClient, blobs: BlobCache, saved: Save
     """Solve and grade ``task_ids`` of ``saved``; one stdout line per task. Model spend stops at the tracker's cap."""
 
     pool = SandboxPool()
+    transcripts = Transcripts()  # images shared by the tasks are read once per run
 
     def work(task_id: str):
         task = next(t for t in saved.run.tasks if t.task_id == task_id)
@@ -76,7 +77,7 @@ def run_eval(rec: Recorder, llm: OpenRouterClient, blobs: BlobCache, saved: Save
         task_llm = llm.for_task(len(task_ids))
         t0 = time.time()
         try:
-            solution = solve(task_rec, task_llm, task, saved.files(task_id), blobs, pool)
+            solution = solve(task_rec, task_llm, task, saved.files(task_id), blobs, pool, transcripts=transcripts)
         except BudgetExhausted:
             solution = FALLBACK
         except Exception as e:  # one task must never stop the evaluation

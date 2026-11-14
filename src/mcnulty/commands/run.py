@@ -17,7 +17,7 @@ from pathlib import Path
 from pydantic import Field
 
 from mcnulty.agent.actions import tool_args
-from mcnulty.agent.loop import Deadline, solve
+from mcnulty.agent.loop import Deadline, Transcripts, solve
 from mcnulty.agent.sandbox import SandboxPool, self_test
 from mcnulty.agent.submit import FALLBACK, Solution
 from mcnulty.clients.arena import (
@@ -148,6 +148,7 @@ def run_tasks(settings: Settings, args: RunArgs, started: float):
         print(self_test(rec, pool))
 
     submitter = Submitter(arena=arena, run_id=run.run_id)
+    transcripts = Transcripts()  # images shared by the tasks are read once per run
     finished = threading.Event()
 
     def finish_run():
@@ -182,7 +183,7 @@ def run_tasks(settings: Settings, args: RunArgs, started: float):
         except Exception as e:
             task_rec.log(TaskCrashed.from_exception(e))
         try:
-            return solve(task_rec, llm.for_task(len(tasks)), task, files, arena.cache, pool, deadline)
+            return solve(task_rec, llm.for_task(len(tasks)), task, files, arena.cache, pool, deadline, transcripts)
         except BudgetExhausted:
             return FALLBACK
         except Exception as e:
