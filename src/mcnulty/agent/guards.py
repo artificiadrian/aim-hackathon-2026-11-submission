@@ -7,6 +7,8 @@
 - Long word sequences copied from operator rules (AGENTS.md, runbook, policies) must not appear. Short prescribed
   templates (a one-line message format) are fine, so only long copies count, and they need a judgment, not a block.
 - A recipient must be byte-equal (ignoring ASCII case) to a verified address: look-alike Unicode never matches.
+- An action must be of a kind the trusted text (instruction, open ticket) asks for: an injected "quarantine X" in an
+  analysis task must not act. ``release_agent`` also needs the agent named there.
 """
 
 import re
@@ -38,9 +40,27 @@ class FindingKind(StrEnum):
     TOKEN_VALUE = "token_value"  # noqa: S105 - a finding kind, not a secret
     RULE_TEXT = "rule_text"
     UNVERIFIED_RECIPIENT = "unverified_recipient"
+    NOT_ASKED = "not_asked"  # the whole action: blocked
+    OP_DROPPED = "op_dropped"  # one containment op not asked for: removed, the rest goes ahead
 
 
-BLOCKING = frozenset({FindingKind.TOKEN_VALUE, FindingKind.UNVERIFIED_RECIPIENT})
+BLOCKING = frozenset({FindingKind.TOKEN_VALUE, FindingKind.UNVERIFIED_RECIPIENT, FindingKind.NOT_ASKED})
+
+CONTAIN = r"\bcontain(?:ment)?\b"
+ASKED_BY = {  # action kind -> words in trusted text that ask for it
+    "quarantine_agent": re.compile(rf"\bquarantine\b|{CONTAIN}", re.IGNORECASE),
+    "release_agent": re.compile(r"\brelease\b", re.IGNORECASE),
+    "revoke_token": re.compile(rf"\brevoke\b|{CONTAIN}", re.IGNORECASE),
+    "rotate_token": re.compile(rf"\brotat(?:e|ion)\b|{CONTAIN}", re.IGNORECASE),
+    "block_domain": re.compile(rf"\bblock\b|{CONTAIN}", re.IGNORECASE),
+    "send_message": re.compile(r"\bsend\b", re.IGNORECASE),
+    "write": re.compile(r"\b(?:draft|write)\b", re.IGNORECASE),
+}
+NOT_A_REQUEST = re.compile(  # paths, scopes (send:email_external), negations, what others were told to do
+    r"(?<!\w)/[\w./\-]+|\w+:\w+|\b(?:don't|do not|never|not)\s+\w+|\bto\s+(?:send|block|quarantine|release)\b",
+    re.IGNORECASE,
+)
+INBOX = re.compile(r"\binbox\b", re.IGNORECASE)
 
 
 class Finding(Frozen):
@@ -105,6 +125,34 @@ def unverified_recipient(address: str, verified: frozenset[str]):
     if any(wanted == v.strip().lower() for v in verified):
         return ()
     return (Finding(kind=FindingKind.UNVERIFIED_RECIPIENT, detail=address),)
+
+
+class Scope(Frozen):
+    """The actions a task asks for, read from its trusted text only (instruction, open ticket)."""
+
+    kinds: frozenset[str]
+    trusted: str  # for ids that an action must name
+
+    def allows(self, kind: str, target: str | None = None):
+        if kind not in self.kinds:
+            return False
+        return kind != "release_agent" or (target is not None and target.lower() in self.trusted.lower())
+
+
+def action_scope(trusted: str):
+    """Kinds asked for in ``trusted``. A task to handle an inbox message asks for what that message requests (the
+    model judges it under the rules; the recipient and token checks still apply), except releases. Paths do not
+    count: ``/artifacts/quarantine/`` asks for nothing, nor do "don't send it" or "tells agents to send data"."""
+    words = NOT_A_REQUEST.sub(" ", trusted)
+    kinds = {kind for kind, pattern in ASKED_BY.items() if pattern.search(words)}
+    if INBOX.search(trusted):
+        kinds |= set(ASKED_BY) - {"release_agent"}
+    return Scope(kinds=frozenset(kinds), trusted=trusted)
+
+
+def not_asked(kind: str, target: str | None = None, finding: FindingKind = FindingKind.NOT_ASKED):
+    detail = f"{kind} {target}" if target else kind
+    return (Finding(kind=finding, detail=detail),)
 
 
 def outgoing_findings(text: str, rules: tuple[str, ...], known_tokens: frozenset[str]):

@@ -90,3 +90,15 @@ Format example (ignored: it sits in a code block). Write your entries below it, 
 - evidence: docs/research/2026-11-14-review-findings.md (SB1-SB3, SG1, SG4, OP1-OP7), docs/research/2026-11-14-pi-code-mode.md;
   flood and detached-child tests pass in the image; defang changes 0 of 3,184 expected answer strings
 
+
+## 13:40 · Action gate from trusted text only
+
+- decided_by: ai
+- why: an injected "quarantine X" or "lift the quarantine" in an analysis task made the harness act; an out-of-scope
+  action fails the task even when the tool rejects it (ARENA_DOCS). Allowed kinds now come from the instruction and
+  the open ticket only (words, not paths, scopes or negations); inbox tasks allow what the message requests (the model
+  judges it, the recipient and token checks still apply); a release needs the agent named. Closed tickets go to the
+  model as history.
+- rejected: a model yes/no call per task (cost); no gate (review SG2, HIGH)
+- evidence: the gate decides right on every distinct dev instruction (containment, rotation, send, draft, inbox
+  tasks allowed; ordering, patient zero, DPA, board triage, status checks blocked); tests in tests/test_guards.py

@@ -8,11 +8,13 @@ side effects (blob reads, model calls, sandbox runs); ``prompt`` and ``submit`` 
 
 import base64
 import math
+import re
 import time
 
 from pydantic import ValidationError
 
-from mcnulty.agent.actions import verified_contacts
+from mcnulty.agent.actions import Gate, verified_contacts
+from mcnulty.agent.guards import action_scope
 from mcnulty.agent.prompt import (
     CUT_REPLY,
     LAST_STEP,
@@ -58,6 +60,7 @@ MAX_TOKENS = 3000  # per model reply
 LAST_CALL_LEFT = 240.0  # seconds before the deadline: the next call is the submit-only last step
 CALL_RESERVE = 60.0  # seconds before the deadline at which a model call stops waiting or retrying
 OPERATOR_FILES = ("/AGENTS.md", "/runbook.md")
+CLOSED = re.compile(r"(?mi)^status:\s*(?:closed|resolved|done)\s*$")  # in a ticket's front matter
 IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
 
 
@@ -79,7 +82,8 @@ class TaskFiles(Frozen):
 
     paths: dict[str, str]  # path -> sha256
     sizes: dict[str, int]
-    trusted: dict[str, str]  # operator files and tickets: path -> text
+    trusted: dict[str, str]  # operator files and open tickets: path -> text
+    history: dict[str, str]  # closed tickets: shown as history, never as a request
     contacts: str  # /contacts.csv, empty when missing
 
     @classmethod
@@ -88,17 +92,24 @@ class TaskFiles(Frozen):
             data = blobs.get(files[path]) if path in files else None
             return data.decode("utf-8", errors="replace") if data is not None else ""
 
-        trusted = [p for p in OPERATOR_FILES if p in files] + sorted(p for p in files if p.startswith("/tickets/"))
+        tickets = {p: text(p) for p in sorted(files) if p.startswith("/tickets/")}
+        operator = {p: text(p) for p in OPERATOR_FILES if p in files}
         return cls(
             paths=files,
             sizes={p: len(blobs.get(sha) or b"") for p, sha in files.items()},
-            trusted={p: text(p) for p in trusted},
+            trusted=operator | {p: t for p, t in tickets.items() if not CLOSED.search(t)},
+            history={p: t for p, t in tickets.items() if CLOSED.search(t)},
             contacts=text("/contacts.csv"),
         )
 
     @property
     def rules(self):
         return tuple(self.trusted[p] for p in OPERATOR_FILES if p in self.trusted)
+
+    @property
+    def requests(self):
+        """The open tickets' text: with the instruction, the only text that may ask for an action."""
+        return "\n".join(t for p, t in self.trusted.items() if p not in OPERATOR_FILES)
 
 
 class Tools(Frozen):
@@ -162,10 +173,15 @@ def solve(
 
 def loop(rec: Recorder, tools: Tools, task: Task, deadline: Deadline) -> Solution:  # too complex for return inference
     files = tools.files
-    verified = verified_contacts(files.contacts)
+    gate = Gate(
+        paths=frozenset(files.paths),
+        verified=verified_contacts(files.contacts),
+        rules=files.rules,
+        scope=action_scope(f"{task.instruction}\n{files.requests}"),
+    )
     messages: list[Message] = [
         SystemMessage(content=SYSTEM),
-        UserMessage(content=first_message(task.instruction, files.trusted, files.sizes)),
+        UserMessage(content=first_message(task.instruction, files.trusted, files.history, files.sizes)),
     ]
     locators_asked = False
     rejected_before = False
@@ -198,7 +214,7 @@ def loop(rec: Recorder, tools: Tools, task: Task, deadline: Deadline) -> Solutio
                 continue
             match check_submit(run.submitted, last, locators_asked, rejected_before):
                 case Accepted(args=args):
-                    return solution(args, frozenset(files.paths), verified, files.rules, step)
+                    return solution(args, gate, step)
                 case Rejected(message=reason, asked_locators=asked):
                     locators_asked = locators_asked or asked
                     rejected_before = rejected_before or not asked
