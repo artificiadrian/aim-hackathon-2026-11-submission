@@ -24,13 +24,14 @@ from mcnulty.agent.submit import (
     FALLBACK,
     SUBMIT,
     TOOLS,
+    Accepted,
+    Rejected,
     RunPythonArgs,
+    ScriptRun,
     ViewImageArgs,
-    missing_locators,
-    missing_locators_message,
-    parse_submit,
-    salvage_submit,
+    check_submit,
     solution,
+    split_submission,
 )
 from mcnulty.blobs import BlobCache
 from mcnulty.clients.arena import Task
@@ -90,7 +91,9 @@ class Tools(Frozen):
 
     def run_python(self, rec: Recorder, args: RunPythonArgs):
         result = self.box.run(rec, args.code)
-        return script_output(result.stdout, result.stderr, result.exit_code, result.seconds)
+        stdout, submitted = split_submission(result.stdout)
+        output = script_output(stdout, result.stderr, result.exit_code, result.seconds)
+        return ScriptRun(output=output, submitted=submitted)
 
     def view_image(self, rec: Recorder, args: ViewImageArgs):
         suffix = "." + args.path.rsplit(".", 1)[-1].lower()
@@ -101,16 +104,18 @@ class Tools(Frozen):
         return self.llm.describe_image(rec, url, args.question, max_tokens=1500)
 
     def call(self, rec: Recorder, call: ToolCall):
-        """Run one work tool; a bad call becomes an error message for the model."""
+        """Run one tool call. ``submit`` comes back as its arguments; a bad call becomes an error for the model."""
         name, arguments = call.function.name, call.function.arguments
         try:
+            if name == "submit":
+                return ScriptRun(output="", submitted=arguments)
             if name == "run_python":
                 return self.run_python(rec, RunPythonArgs.model_validate_json(arguments))
             if name == "view_image":
-                return self.view_image(rec, ViewImageArgs.model_validate_json(arguments))
+                return ScriptRun(output=self.view_image(rec, ViewImageArgs.model_validate_json(arguments)))
         except ValidationError as e:
-            return f"error in the arguments of {name}: {e}"
-        return f"error: no tool named {name}"
+            return ScriptRun(output=f"error in the arguments of {name}: {e}")
+        return ScriptRun(output=f"error: no tool named {name}")
 
 
 def solve(rec: Recorder, llm: OpenRouterClient, task: Task, files: dict[str, str], blobs: BlobCache):
@@ -150,21 +155,15 @@ def loop(rec: Recorder, tools: Tools, task: Task):
             messages.append(UserMessage(content=USE_A_TOOL))
             continue
         for call in message.tool_calls:
-            if call.function.name != "submit":
-                messages.append(ToolMessage(tool_call_id=call.id, content=tools.call(rec, call)))
+            run = tools.call(rec, call)
+            if run.submitted is None:
+                messages.append(ToolMessage(tool_call_id=call.id, content=run.output))
                 continue
-            try:
-                args = parse_submit(call.function.arguments)
-            except ValidationError as e:
-                salvaged = salvage_submit(call.function.arguments) if last else None
-                if salvaged is not None:
-                    return solution(salvaged, verified, files.rules, step)
-                messages.append(ToolMessage(tool_call_id=call.id, content=f"error in the arguments of submit: {e}"))
-                continue
-            missing = missing_locators(args)
-            if missing and not locators_asked and not last:
-                locators_asked = True
-                messages.append(ToolMessage(tool_call_id=call.id, content=missing_locators_message(missing)))
-                continue
-            return solution(args, verified, files.rules, step)
+            match check_submit(run.submitted, last, locators_asked):
+                case Accepted(args=args):
+                    return solution(args, verified, files.rules, step)
+                case Rejected(message=reason, asked_locators=asked):
+                    locators_asked = locators_asked or asked
+                    output = f"{run.output}\n{reason}" if run.output else reason
+                    messages.append(ToolMessage(tool_call_id=call.id, content=output))
     return FALLBACK.model_copy(update={"steps": MAX_STEPS})

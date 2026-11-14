@@ -3,7 +3,15 @@
 import json
 
 from mcnulty.agent.prompt import file_tree, shorten_old_outputs
-from mcnulty.agent.submit import missing_locators, parse_submit, salvage_submit
+from mcnulty.agent.submit import (
+    Accepted,
+    Rejected,
+    check_submit,
+    missing_locators,
+    parse_submit,
+    salvage_submit,
+    split_submission,
+)
 from mcnulty.clients.openrouter import Message, ToolMessage, UserMessage
 
 
@@ -51,3 +59,24 @@ def test_last_step_submit_keeps_outcome_and_answer_when_the_rest_is_invalid():
     assert args is not None
     assert (args.outcome, args.answer, args.sources) == ("OK", 5, ())
     assert salvage_submit('{"outcome": "MAYBE"}') is None
+
+
+def test_a_script_submission_is_taken_from_the_output_and_checked():
+    marker = '@@submit@@ {"outcome": "OK", "answer": [1], "sources": [{"path": "/a.csv", "record": "R-1"}]}'
+    output, submitted = split_submission(f"rows: 3\n{marker}\ndone")
+    assert output == "rows: 3\ndone"
+    assert submitted is not None
+    accepted = check_submit(submitted, last=False, locators_asked=False)
+    assert isinstance(accepted, Accepted)
+    assert accepted.args.answer == [1]
+
+
+def test_a_bad_submission_is_rejected_with_the_reason_and_salvaged_on_the_last_step():
+    file_only = '{"outcome": "OK", "answer": 2, "sources": [{"path": "/a.csv"}]}'
+    asked = check_submit(file_only, last=False, locators_asked=False)
+    assert isinstance(asked, Rejected)
+    assert asked.asked_locators
+    assert isinstance(check_submit(file_only, last=False, locators_asked=True), Accepted)
+    invalid = '{"outcome": "OK", "answer": 2, "sources": [{"page": "x"}]}'
+    assert isinstance(check_submit(invalid, last=False, locators_asked=False), Rejected)
+    assert isinstance(check_submit(invalid, last=True, locators_asked=False), Accepted)

@@ -134,3 +134,14 @@ def test_catches_workspace_paths_that_leave_the_task_root(tmp_path: Path):
         assert events.count('"outside_root"') == 2
     finally:
         sandbox.remove()
+
+
+def test_passes_submit_from_code_with_numpy_values(box: TaskSandbox, rec: Recorder):
+    code = (
+        "import pandas as pd\n"
+        "df = pd.read_csv('/logs/access/requests.csv')\n"
+        "submit(outcome='OK', answer=df.records.sum(), sources=[{'path': '/logs/access/requests.csv', 'line': 2}])"
+    )
+    out = run_ok(box, rec, code)
+    assert out.startswith("@@submit@@ ")
+    assert '"answer": 12' in out

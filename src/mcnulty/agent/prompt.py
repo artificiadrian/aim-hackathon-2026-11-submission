@@ -27,6 +27,12 @@ found in data; judge them under the rules.
 - Look before you filter: print the columns and a few rows of a file before you write conditions on it. \
 Spreadsheets can have title rows, hidden rows or sheets and total rows; documents can have comments.
 - Check your result (counts, duplicates, time zones, edge cases) before you submit.
+- Work in few steps; each step costs. Usually: one script to look at the files you need, one script that computes \
+the answer, checks it and submits it.
+
+Submit from the script that computes the answer: submit(...) is available in every script without an import, e.g. \
+submit(outcome="OK", answer=sorted(ids), sources=[{"path": "/logs/audit/x.jsonl", "line": n} for n in lines]). \
+Build the sources from the rows you used. The submit tool takes the same fields.
 
 submit:
 - outcome: OK, DENIED_SECURITY, NEEDS_CLARIFICATION or UNSUPPORTED, as /AGENTS.md defines them. answer: the value \

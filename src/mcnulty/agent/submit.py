@@ -10,6 +10,7 @@ from mcnulty.clients.openrouter import FunctionSpec, ToolDefinition
 from mcnulty.frozen import JSON, Frozen
 
 PATH_ONLY = (".png", ".jpg", ".jpeg", ".json")  # cited by path alone
+SUBMIT_MARKER = "@@submit@@ "  # printed by submit() in the sandbox (sandbox/sitecustomize.py)
 
 
 def source_from_text(value: object):
@@ -122,6 +123,49 @@ def missing_locators_message(missing: list[str]):
         f"not submitted: these sources have no locator: {', '.join(sorted(set(missing)))}. A file citation earns "
         "nothing; cite each line, record, row, paragraph or page your answer rests on, then call submit again."
     )
+
+
+class ScriptRun(Frozen):
+    """A script's output for the model, and the arguments of a ``submit(...)`` it called, if any."""
+
+    output: str
+    submitted: str | None = None
+
+
+def split_submission(stdout: str):
+    """The output without ``submit(...)`` marker lines, and the JSON of the last such call."""
+    kept: list[str] = []
+    submitted: str | None = None
+    for line in stdout.splitlines():
+        if line.startswith(SUBMIT_MARKER):
+            submitted = line.removeprefix(SUBMIT_MARKER)
+        else:
+            kept.append(line)
+    return "\n".join(kept), submitted
+
+
+class Accepted(Frozen):
+    args: SubmitArgs
+
+
+class Rejected(Frozen):
+    message: str
+    asked_locators: bool = False
+
+
+def check_submit(arguments: str, last: bool, locators_asked: bool) -> Accepted | Rejected:
+    """Accept a submission, or say why not. The last step accepts what it can; the locator check asks once."""
+    try:
+        args = parse_submit(arguments)
+    except ValidationError as e:
+        salvaged = salvage_submit(arguments) if last else None
+        if salvaged is not None:
+            return Accepted(args=salvaged)
+        return Rejected(message=f"not submitted, the arguments are invalid: {e}")
+    missing = missing_locators(args)
+    if missing and not locators_asked and not last:
+        return Rejected(message=missing_locators_message(missing), asked_locators=True)
+    return Accepted(args=args)
 
 
 def solution(args: SubmitArgs, verified: frozenset[str], rules: tuple[str, ...], steps: int):
