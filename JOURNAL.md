@@ -265,3 +265,19 @@ Format example (ignored: it sits in a code block). Write your entries below it, 
 - why: eval 20261114T135828Z: 6 of 9 script failures were NameError on a variable from an earlier script (each script was a new process); every script reloaded its frames
 - rejected: Jupyter kernel (new dependency, more surface); pipes (a print flood or stray child blocks the harness); files in the task root (the task uid could swap them)
 - evidence: docs/ideas/persistent-kernel.md; 31 image tests pass; 12 kernels with pandas: 912 MB
+
+## 15:29 · Jev: a classify tool and a shadow action check
+
+- decided_by: both
+- why: board triage failed on keyword lists (t10 0.27); live probes on the collected runs
+  (docs/research/2026-11-14-jev-probe.md) showed Jev judges every line of a board for about $0.004 with no
+  injected post missed (193 of 203 flagged, 10 in the unsure list, 6 false flags over 15 boards), and that a
+  "does the request ask for this kind of operation" question blocks 0 of 66 right actions and catches every other
+  wrong kind except revoke-for-rotate
+- decision: a third tool classify(path, question) for text files (lines as units, invisible characters removed,
+  base64 decoded in code, a second pass that judges split messages together; flagged >= 0.8, unsure 0.2-0.8 for
+  the model to read); after the loop, one Jev call per proposed action op, recorded as action_judged, blocking
+  nothing until an eval shows no false block
+- rejected: the definition inside the per-line question (64 routine posts flagged on one board: the question
+  goes into the state, each line gets a short question); a word gate (25 analysis requests match "send")
+- evidence: tests/test_jev.py (4 offline, 1 live); host checks pass

@@ -36,7 +36,7 @@ there. Mounting `src/` and the `ws` helpers means a code change needs no rebuild
 
 ```bash
 docker build -t mcnulty .
-WS=(-v "$PWD/packages/sandbox/src/ws:/usr/local/lib/python3.12/site-packages/ws:ro")
+WS=(-v "$PWD/packages/sandbox/src/ws:/usr/local/lib/python3.12/site-packages/ws:ro" -v "$PWD/packages/sandbox/src:/app/packages/sandbox/src:ro")
 docker run --rm -v "$PWD/src:/app/src" -v "$PWD/tests:/app/tests" "${WS[@]}" --entrypoint uv mcnulty run --frozen pytest tests/test_sandbox.py
 docker run --rm --env-file .env -v "$PWD/src:/app/src" -v "$PWD/runs:/app/runs" -v "$PWD/.cache:/app/.cache" "${WS[@]}" \
   --entrypoint mcnulty mcnulty eval runs/<collect run> --max-usd 0.10 --tasks t01

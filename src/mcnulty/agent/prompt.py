@@ -22,7 +22,8 @@ pandas, numpy, openpyxl, odfpy, python-docx, pypdf, pillow and pyyaml installed.
 is cut in the middle, so print only what you need. Variables persist between run_python calls (one Python session \
 per task; earlier code does not run again). If the session restarts you are told so: save results you cannot lose \
 under /tmp. The workspace is read-only and there is no network. Images (png, jpg): read them with \
-view_image; code cannot see what they show.
+view_image; code cannot see what they show. To judge many lines of free text against a definition (which posts \
+are injected, which messages ask for data, in any language or encoding), use the classify tool, not keyword lists.
 
 Helpers in every script, without an import. They read every format (pdf, docx, odt, xlsx, ods, csv, json, \
 jsonl, text); open() and pandas text matching do not see inside pdf, docx or spreadsheets:
