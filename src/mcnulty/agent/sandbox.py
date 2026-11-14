@@ -176,8 +176,11 @@ def ensure_base(pool: SandboxPool):
         (partial / "tmp").mkdir()
         (partial / "tmp").chmod(0o1777)
         (partial / "dev").mkdir()
-        os.mknod(partial / "dev" / "null", stat.S_IFCHR | 0o666, os.makedev(1, 3))  # the only device in the sandbox
-        (partial / "dev" / "null").chmod(0o666)  # mknod applies the umask
+        try:
+            os.mknod(partial / "dev" / "null", stat.S_IFCHR | 0o666, os.makedev(1, 3))  # the only device in the sandbox
+            (partial / "dev" / "null").chmod(0o666)  # mknod applies the umask
+        except PermissionError:  # no MKNOD capability (the final container drops some, demo check 16:10)
+            pass  # the kernel falls back to a pipe; model code that opens /dev/null gets an error
         partial.rename(BASE)
 
 
@@ -234,6 +237,7 @@ class Session:
     channel: socket.socket | None = None
     cells: int = 0
     lost: str | None = None  # why the kernel ended during the last cell; told at the next start
+    seen: dict[str, int] = field(default_factory=dict[str, int])  # code of each cell -> its number
 
 
 def tree_bytes(folder: Path):
@@ -314,6 +318,9 @@ class TaskSandbox:
         with session.lock:
             session.cells += 1
             cell = Cell(cell=session.cells, code=code, cpu=CPU_PER_CELL)
+            same = "\n".join(line.rstrip() for line in code.strip().splitlines())
+            repeat_of = session.seen.get(same)
+            session.seen[same] = cell.cell
             t0 = time.time()
             with (
                 tempfile.TemporaryFile() as out,
@@ -347,6 +354,7 @@ class TaskSandbox:
                     tmp_cleared=tmp_cleared,
                     cell=cell.cell,
                     restarted=restarted,
+                    repeat_of=repeat_of,
                 )
 
     def start_kernel(self, out: BinaryIO, err: BinaryIO):

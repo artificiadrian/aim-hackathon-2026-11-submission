@@ -208,6 +208,8 @@ def stderr_view(err: Stream):
 def script_output(run: SandboxRan):
     """What the model sees of one run: the status line, stdout, then stderr in its own block."""
     parts = [status(run), stdout_view(run.stdout)]
+    if run.repeat_of is not None:
+        parts.insert(0, f"[same code as cell {run.repeat_of}: to learn something new, change the code]")
     if run.restarted is not None:
         lost = "variables are lost; load the files again; /tmp is kept"
         parts.insert(0, f"[session restarted ({run.restarted}): {lost}]")

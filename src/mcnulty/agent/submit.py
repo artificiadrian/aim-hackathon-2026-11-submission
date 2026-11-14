@@ -1,12 +1,13 @@
 """The model's tools and its typed final answer: parsing, the locator check and the checked result. Pure functions."""
 
+import json
 from typing import Annotated
 
 from pydantic import BeforeValidator, JsonValue, TypeAdapter, ValidationError
 
 from mcnulty.agent.actions import Action, Gate, VettedAction, vet
 from mcnulty.agent.citations import fixed_sources
-from mcnulty.agent.guards import clean_answer
+from mcnulty.agent.guards import clean_answer, redact_tokens
 from mcnulty.clients.arena import Outcome, Source, Submission
 from mcnulty.clients.openrouter import FunctionSpec, ToolDefinition
 from mcnulty.frozen import JSON, Frozen, ModelInput
@@ -216,6 +217,12 @@ def missing_locators(args: SubmitArgs):
     ]
 
 
+REDACTION_NOTE = (
+    "the answer holds a secret token value, which the harness replaces with [redacted]: name the token by its id "
+    "or name as the rules and the task use it, not by its value"
+)
+
+
 def missing_locators_message(missing: list[str]):
     return (
         f"these sources have no locator: {', '.join(sorted(set(missing)))}; a file citation earns nothing: cite "
@@ -257,6 +264,8 @@ def check_submit(arguments: str, final: bool, citations_asked: bool, rejected_be
         args = salvaged.args
     missing = missing_locators(args)
     problems = [*args.notes, *([missing_locators_message(missing)] if missing else [])]
+    if redact_tokens(json.dumps(args.answer)) != json.dumps(args.answer):
+        problems.append(REDACTION_NOTE)  # eval A t25: redacted silently, the model never learned why
     if problems and not citations_asked and not final:
         listed = "\n".join(f"- {p}" for p in problems)
         message = (

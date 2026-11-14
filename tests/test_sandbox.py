@@ -298,6 +298,7 @@ def test_passes_variables_kept_between_cells(box: TaskSandbox, rec: Recorder):
     assert (first.cell, second.cell) == (1, 2)
     assert first.restarted is None
     assert second.restarted is None
+    assert box.run(rec, "print(x + 1)  \n").repeat_of == 2  # the same code again, trailing spaces aside
 
 
 def test_passes_errors_and_exits_keep_the_session(box: TaskSandbox, rec: Recorder):
@@ -310,7 +311,8 @@ def test_passes_errors_and_exits_keep_the_session(box: TaskSandbox, rec: Recorde
     assert box.run(rec, "raise SystemExit(3)").exit_code == 3
     assert run_ok(box, rec, "import os; os.chdir('/tmp'); print(x + y)") == "3"
     assert run_ok(box, rec, "import os; print(os.getcwd())") == "/"
-    assert run_ok(box, rec, "print(open('/dev/null', 'w').write('x'), open('/dev/null').read() == '')") == "1 True"
+    if (box.root / "dev" / "null").exists():  # no device without the MKNOD capability (the final container)
+        assert run_ok(box, rec, "print(open('/dev/null', 'w').write('x'), open('/dev/null').read() == '')") == "1 True"
 
 
 def test_passes_submit_read_only_from_its_own_cell(box: TaskSandbox, rec: Recorder):

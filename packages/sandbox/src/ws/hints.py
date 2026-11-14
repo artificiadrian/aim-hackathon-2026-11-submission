@@ -22,6 +22,11 @@ GREP_TIP = (
     "tip: grep(pattern, *paths) searches every format (pdf, xlsx, docx, json) and returns hits you can cite; "
     "the shell's grep sees only plain text."
 )
+OPENED = re.compile(r"""\bopen\(\s*[rf]?["'](/[^"']+\.(?:csv|jsonl|json|xlsx|xlsm|ods|md))["']""")
+OPEN_TIP = (
+    'tip: table({path!r}) gives the same rows as a DataFrame with each row\'s citation in "_source"; text(path) '
+    "shows a document with its line numbers."
+)
 TZ_HINT = "hint: make both sides aware: pd.to_datetime(values, utc=True), or .dt.tz_convert('UTC') when already aware."
 
 
@@ -81,5 +86,10 @@ def error_hint(error: BaseException, namespace: dict[str, object]):
 
 
 def code_tip(code: str):
-    """A tip before a cell that greps through the shell; None otherwise."""
-    return GREP_TIP if SHELL_GREP.search(code) else None
+    """A tip before a cell that greps through the shell, or that opens a workspace table file with ``open()`` (77
+    cells did; their rows had no citations, prompt review 2026-11-14); None otherwise."""
+    if SHELL_GREP.search(code):
+        return GREP_TIP
+    paths = [str(found.group(1)) for found in OPENED.finditer(code)]
+    opened = [p for p in paths if not in_scratch(Path(p))]
+    return OPEN_TIP.format(path=opened[0]) if opened else None
