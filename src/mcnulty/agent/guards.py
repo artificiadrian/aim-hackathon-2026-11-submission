@@ -124,8 +124,9 @@ def addresses(text: str):
 
 
 def recipient(to: str, trusted: frozenset[str]):
-    """``trusted``: the addresses in the instruction, the operator files and the open ticket (``addresses``)."""
-    if plain_address(to) in trusted:
+    """``trusted``: the addresses in the instruction, the operator files and the open ticket (``addresses``). With no
+    trusted address at all (the contacts in a file the operator files do not name), nothing is known: fail open."""
+    if not trusted or plain_address(to) in trusted:
         return ()
     detail = f"{to} is not written in the instruction, the operator files or the open ticket"
     return (Finding(kind=FindingKind.RECIPIENT, detail=detail),)

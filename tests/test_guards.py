@@ -281,6 +281,11 @@ def test_recipient_catches_look_alikes(to: str):
     assert [f.kind for f in recipient(to, frozenset({"dpo@muggingface.example"}))] == ["recipient"]
 
 
+def test_recipient_passes_any_address_when_no_address_is_trusted():
+    """Fail open: a workspace whose operator files name no contacts would otherwise block every message task."""
+    assert recipient("dpo@muggingface.example", frozenset()) == ()
+
+
 def test_recipient_passes_case_spaces_and_defanged_dots():
     trusted = addresses("K-02,DPO,jonas.lindgren@muggingface.example,yes")
     assert recipient(" Jonas.Lindgren@MuggingFace.example ", trusted) == ()
