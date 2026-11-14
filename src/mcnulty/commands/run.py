@@ -128,9 +128,10 @@ def run_tasks(settings: Settings, args: RunArgs, started: float):
         manifest = RunManifest()  # every task is solved without files and still submitted
     (run_dir / "manifest.json").write_text(manifest.model_dump_json(indent=1), encoding="utf-8")
     manifest_files = {t.task_id: t.files for t in manifest.tasks}
-    stats = arena.prefetch(rec, manifest, run.run_id)
-    print(f"prefetch: {stats.blobs} files, {stats.downloaded} downloaded, {stats.failed} failed")
-    if not args.collect:
+    if args.collect:
+        stats = arena.prefetch(rec, manifest, run.run_id)
+        print(f"collect: {sum(x.files for x in stats)} files, {sum(x.failed for x in stats)} failed")
+    else:
         print(self_test(rec))
 
     submitter = Submitter(arena=arena, run_id=run.run_id)
@@ -162,8 +163,10 @@ def run_tasks(settings: Settings, args: RunArgs, started: float):
         finish_run()
 
     def solved(task: Task, task_rec: Recorder):
+        files = manifest_files.get(task.task_id, {})
         try:
-            return solve(task_rec, llm.for_task(), task, manifest_files.get(task.task_id, {}), arena.cache, deadline)
+            arena.fetch_task(task_rec, run.run_id, task.task_id, files)
+            return solve(task_rec, llm.for_task(), task, files, arena.cache, deadline)
         except BudgetExhausted:
             return FALLBACK
         except Exception as e:

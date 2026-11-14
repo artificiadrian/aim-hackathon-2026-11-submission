@@ -1,10 +1,13 @@
 """Whole-CLI runs against the offline mock Task API (tests/mock_server.py). No model calls."""
 
+import hashlib
+import io
 import json
 import os
 import subprocess
 import sys
 import threading
+import zipfile
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
@@ -120,3 +123,58 @@ def test_a_tool_call_that_may_have_arrived_is_not_sent_again(tmp_path: Path):
     with pytest.raises(ArenaError):
         arena.call_tool(rec, "r", "t01", "containment", {"ops": []})
     assert len(calls) == 1
+
+
+def test_a_task_fetches_its_zip_then_each_file_the_zip_left_out_or_changed(tmp_path: Path):
+    small, changed_old, large = b"rules", b'{"v": 1}', b"%PDF big"
+    sha = {d: hashlib.sha256(d).hexdigest() for d in (small, changed_old, large)}
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as z:
+        z.writestr("AGENTS.md", small)
+        z.writestr("plans/state.json", b'{"v": 2}')  # the zip shows the current state
+        z.writestr("LARGE_FILES.txt", b"docs/big.pdf")
+    blobs_asked: list[str] = []
+
+    def handler(request: httpx.Request):
+        if request.url.path.endswith("/workspace.zip"):
+            return httpx.Response(200, content=buffer.getvalue())
+        blobs_asked.append(request.url.path.rsplit("/", 1)[-1])
+        data = {sha[changed_old]: changed_old, sha[large]: large}[blobs_asked[-1]]
+        return httpx.Response(200, content=data)
+
+    arena = ArenaClient(
+        http=httpx.Client(base_url="http://arena.test/api/v1", transport=httpx.MockTransport(handler)),
+        cache=BlobCache(root=tmp_path / "blobs"),
+    )
+    files = {"/AGENTS.md": sha[small], "/plans/state.json": sha[changed_old], "/docs/big.pdf": sha[large]}
+    stats = arena.fetch_task(Recorder(events=EventLog(run_dir=tmp_path / "run")), "r", "t01", files)
+    assert (stats.from_zip, stats.one_by_one, stats.failed) == (1, 2, 0)
+    assert sorted(blobs_asked) == sorted([sha[changed_old], sha[large]])
+    assert all(arena.cache.get(s) is not None for s in files.values())
+
+
+def test_parallel_tasks_download_a_shared_large_file_once(tmp_path: Path):
+    data = b"%PDF shared by every task"
+    sha = hashlib.sha256(data).hexdigest()
+    asked: list[str] = []
+
+    def handler(request: httpx.Request):
+        if request.url.path.endswith("/workspace.zip"):
+            return httpx.Response(404)
+        asked.append(request.url.path)
+        return httpx.Response(200, content=data)
+
+    arena = ArenaClient(
+        http=httpx.Client(base_url="http://arena.test/api/v1", transport=httpx.MockTransport(handler)),
+        cache=BlobCache(root=tmp_path / "blobs"),
+    )
+    rec = Recorder(events=EventLog(run_dir=tmp_path / "run"))
+    threads = [
+        threading.Thread(target=arena.fetch_task, args=(rec, "r", f"t{i:02d}", {"/docs/big.pdf": sha}))
+        for i in range(8)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(asked) == 1

@@ -112,3 +112,15 @@ Format example (ignored: it sits in a code block). Write your entries below it, 
 - evidence: on the stopped eval's own submissions, offline: t01 0/1 -> 1/1, t07 0/10 -> 10/10, t10 0/1 -> 1/1, no
   extra citations; on all dev data every expected csv record is reachable from a line (1,178), the archive log with
   a repeating first column stays by line (94)
+
+## 14:40 · Files per task by zip, not a prefetch of the whole run
+
+- decided_by: both
+- why: the prefetch made ~530 requests (27-30 s at the rate limit) before any task could start, and one failure
+  touched every task. `workspace.zip` gives a task in one request, but the platform caps it at 8 MB and lists the
+  left-out files in LARGE_FILES.txt (19 big reference PDFs, shared by all 48 tasks); a file whose state changed
+  (containment.json) differs from the manifest
+- decision: each task fetches its zip when it starts, keeps members that match the manifest hash, and fetches the
+  rest by hash into the shared cache, each blob once per run (a lock per blob)
+- rejected: skip the big PDFs (never cited in dev, but that is fitting to dev data)
+- evidence: live check on run_94dAWU6i2EV- t01: 375 members, 373 match the manifest, 19 left out, 1 changed

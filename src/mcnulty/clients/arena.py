@@ -1,14 +1,18 @@
 """Task API client (``{ARENA_BASE_URL}/api/v1``) and its data models. Every request is logged to a Recorder."""
 
+import io
 import shutil
 import subprocess
+import threading
 import time
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import suppress
 from pathlib import Path
 from typing import ClassVar, Literal
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, PrivateAttr
 
 from mcnulty.blobs import BlobCache, BlobMismatch
 from mcnulty.clients.http import header, retry_after
@@ -21,6 +25,7 @@ type Outcome = Literal["OK", "DENIED_SECURITY", "NEEDS_CLARIFICATION", "UNSUPPOR
 type RunKind = Literal["dev", "final"]
 MAX_NOTE = 500  # characters in a run note
 RETRIES = 7
+ZIP_MEMBER_MAX = 512 * 1024 * 1024  # bytes: a larger member is fetched by itself
 NOT_RUN = frozenset({502, 503, 504})  # gateway answers: the request did not reach the Task API
 
 
@@ -145,11 +150,11 @@ class RunMeta(Frozen):
     note: str | None = Field(default=None, max_length=MAX_NOTE)
 
 
-class PrefetchStats(Frozen):
-    blobs: int
-    downloaded: int
+class FetchStats(Frozen):
+    files: int
+    from_zip: int
+    one_by_one: int
     failed: int
-    bytes: int
 
 
 class ArenaError(RuntimeError):
@@ -171,6 +176,13 @@ class ArenaClient(BaseModel):
 
     http: httpx.Client
     cache: BlobCache
+    _locks: dict[str, threading.Lock] = PrivateAttr(default_factory=dict[str, threading.Lock])
+    _locks_guard: threading.Lock = PrivateAttr(default_factory=threading.Lock)
+
+    def lock_for(self, sha256: str):
+        """One lock per blob: parallel tasks that need the same large file download it once."""
+        with self._locks_guard:
+            return self._locks.setdefault(sha256, threading.Lock())
 
     @classmethod
     def connect(cls, settings: Settings):
@@ -261,37 +273,56 @@ class ArenaClient(BaseModel):
         return RunManifest.model_validate_json(self.send(rec, "GET", f"/runs/{run_id}/manifest").content)
 
     def blob(self, rec: Recorder, run_id: str, sha256: str, task_id: str | None = None):
-        data = self.cache.get(sha256)
-        if data is None:
-            data = self.send(
-                rec,
-                "GET",
-                f"/runs/{run_id}/blobs/{sha256}" + (f"?task={task_id}" if task_id else ""),
-            ).content
-            self.cache.put(sha256, data)
+        with self.lock_for(sha256):
+            data = self.cache.get(sha256)
+            if data is None:
+                data = self.send(
+                    rec,
+                    "GET",
+                    f"/runs/{run_id}/blobs/{sha256}" + (f"?task={task_id}" if task_id else ""),
+                ).content
+                self.cache.put(sha256, data)
         return data
 
-    def prefetch(self, rec: Recorder, manifest: RunManifest, run_id: str):
-        """Download every blob of the run that is not cached yet, in parallel. A blob that fails is logged and
-        skipped: its task runs without that file (``TaskSandbox.create`` logs it again)."""
-        owner = {sha: t.task_id for t in manifest.tasks for sha in t.files.values()}
-        missing = [b for b in manifest.blobs if self.cache.get(b.sha256) is None]
-
-        def fetch(blob: BlobInfo):
+    def fetch_task(self, rec: Recorder, run_id: str, task_id: str, files: dict[str, str]):
+        """Put every file of one task (path -> sha256) into the cache: one ``workspace.zip``, then each file the zip
+        left out (it omits large files) or holds in a changed state, one by one. A file that fails is logged and
+        skipped: the task runs without it (``TaskSandbox.create`` logs it again)."""
+        missing = {p: sha for p, sha in files.items() if self.cache.get(sha) is None}
+        if missing:
+            self.unzip_into_cache(rec, run_id, task_id, missing)
+        left = {p: sha for p, sha in missing.items() if self.cache.get(sha) is None}
+        failed = 0
+        for sha in set(left.values()):
             try:
-                self.blob(rec, run_id, blob.sha256, owner.get(blob.sha256))
+                self.blob(rec, run_id, sha, task_id)
             except (ArenaError, BlobMismatch):  # send() logs the request
-                return False
-            return True
+                failed += 1
+        return FetchStats(files=len(files), from_zip=len(missing) - len(left), one_by_one=len(left), failed=failed)
+
+    def unzip_into_cache(self, rec: Recorder, run_id: str, task_id: str, wanted: dict[str, str]):
+        """Cache each member of the task's zip whose bytes match the manifest; anything else is fetched later."""
+        try:
+            data = self.send(rec, "GET", f"/runs/{run_id}/tasks/{task_id}/workspace.zip").content
+            archive = zipfile.ZipFile(io.BytesIO(data))
+        except (ArenaError, zipfile.BadZipFile):
+            return
+        with archive:
+            for info in archive.infolist():
+                sha = wanted.get("/" + info.filename.lstrip("/"))
+                if sha is None or info.file_size > ZIP_MEMBER_MAX:
+                    continue
+                with suppress(BlobMismatch):  # a file whose state changed since the manifest: fetched by its hash
+                    self.cache.put(sha, archive.read(info))
+
+    def prefetch(self, rec: Recorder, manifest: RunManifest, run_id: str):
+        """Every file of every task into the cache, tasks in parallel (``mcnulty collect``)."""
+
+        def fetch(task: TaskFiles):
+            return self.fetch_task(rec, run_id, task.task_id, task.files)
 
         with ThreadPoolExecutor(max_workers=8) as ex:
-            ok = list(ex.map(fetch, missing))
-        return PrefetchStats(
-            blobs=len(manifest.blobs),
-            downloaded=sum(ok),
-            failed=len(ok) - sum(ok),
-            bytes=sum(b.size for b, done in zip(missing, ok, strict=True) if done),
-        )
+            return list(ex.map(fetch, manifest.tasks))
 
     def submit(self, rec: Recorder, run_id: str, task_id: str, submission: Submission):
         # answer null is meaningful (e.g. UNSUPPORTED), so only the sources drop their empty locators
