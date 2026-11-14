@@ -157,3 +157,14 @@ Format example (ignored: it sits in a code block). Write your entries below it, 
 - changed: the recipient check fails open when no contact list is found (it blocked every message before)
 - kept: defang and token redaction (formats from the platform docs), csv citations as records (platform docs),
   run safety, the sandbox
+
+## 15:55 · Helpers in the sandbox: text, cite, grep, sh
+
+- decided_by: both
+- why: the model computed locators by hand (line numbers, sheet rows, non-empty paragraphs) and got them wrong;
+  the rules for each file type (platform docs) belong in code, not in every prompt
+- decision: sandbox/ws.py, loaded by sitecustomize as builtins: text(path) shows any file as units with locators,
+  cite(path, value, column=None) returns sources, grep searches every format, sh runs a shell command. No bash tool:
+  one tool keeps the prefix small; subprocess works from Python anyway
+- evidence: on all dev runs, the helpers produce the platform's expected locator for xlsx 109/109, ods 51/51, docx
+  13/13, pdf 5/5, jsonl 824/824, md 108/108, csv 1,407/1,434 (the 27 are records of servers missing from the file)

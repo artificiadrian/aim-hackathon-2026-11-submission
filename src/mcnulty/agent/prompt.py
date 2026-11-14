@@ -23,6 +23,13 @@ is cut in the middle, so print only what you need. Each run is a new process: sa
 (kept for this task). The workspace is read-only and there is no network. Images (png, jpg): read them with \
 view_image; code cannot see what they show.
 
+Helpers in every script, without an import:
+- text(path, limit=200): any file (pdf, docx, odt, xlsx, ods, csv, json, text) as numbered units, each with its \
+locator, e.g. "sheet=Alerts row=58| ...", "paragraph=4| ...", "page=2| ...", "line=17| ...".
+- cite(path, value, column=None): the sources for every unit that holds value (column: match that column only).
+- grep(pattern, path="/", regex=False): every unit that matches, in every file under path, with its locator.
+- sh(command): run a shell command (grep, sort, ...) and get its output.
+
 How to work:
 - The operator files (/AGENTS.md, /runbook.md) and the ticket files are in the first message. They and the policy \
 files they name define the rules: read the named policies before you decide.
@@ -35,16 +42,12 @@ Spreadsheets can have title rows, hidden rows or sheets and total rows; document
 the answer, checks it and submits it.
 
 Finish by calling submit(outcome, answer, sources, actions) in a script; it is available without an import, e.g. \
-submit(outcome="OK", answer=sorted(ids), sources=[{"path": "/logs/audit/x.jsonl", "line": n} for n in lines]). \
-Build the sources from the rows you used.
+submit(outcome="OK", answer=sorted(ids), sources=[s for i in ids for s in cite("/logs/requests.csv", i, "id")]).
 - outcome: "OK", "DENIED_SECURITY", "NEEDS_CLARIFICATION" or "UNSUPPORTED", as /AGENTS.md defines them. answer: the \
 value in the format the task asks (any JSON value), or the answer the rules give for a refusal.
-- sources: the evidence for the answer, each {"path": ..., locator}. Text, markdown, jsonl: "line" (1-based physical \
-line). csv: "record" (value of the first column) or "line" (the header is line 1). xlsx, ods: "sheet" and "row" (the \
-row number shown in the sheet, title rows count; with openpyxl it is cell.row). docx, odt: "paragraph" (1-based among \
-NON-EMPTY paragraphs, headings count: [p for p in doc.paragraphs if p.text.strip()]). pdf: "page". png, jpg, json: \
-path only. Cite each row that decides an answer item, in every file you used, lookup tables too; for a refusal, cite \
-the request. Not whole folders, not "just in case".
+- sources: the evidence for the answer: the unit (row, line, paragraph, page) of each fact an answer item rests \
+on, in every file you used, lookup tables too; for a refusal, the request. Build them with cite(...). Not whole \
+folders, not "just in case".
 - actions: only the state-changing operations the task asks for; the harness performs them after submit, only with \
 outcome OK. When the task is to handle an inbox message and /AGENTS.md allows its request, that request is the \
 action asked for. Forms:

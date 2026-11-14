@@ -5,6 +5,7 @@ Runs only inside the Docker image (AGENTS.md, Commands); skipped elsewhere.
 """
 
 import hashlib
+import json
 import os
 import threading
 import time
@@ -217,3 +218,45 @@ def test_passes_a_script_that_waits_for_a_slot_says_so(rec: Recorder, tmp_path: 
 
 def test_passes_workspace_files_hard_linked_from_the_cache(box: TaskSandbox):
     assert (box.root / "AGENTS.md").stat().st_nlink >= 2
+
+
+HELPER_FILES = """
+import openpyxl, docx, json
+from odf.opendocument import OpenDocumentText
+from odf.text import P, H
+book = openpyxl.Workbook(); ws = book.active; ws.title = "Alerts"
+ws.append(["Security alerts export"]); ws.append([]); ws.append(["id", "token", "status"])
+ws.append(["A-1", "TOK-1", "open"]); ws.append(["A-2", "TOK-2", "closed"]); ws.row_dimensions[5].hidden = True
+book.save("/tmp/a.xlsx")
+d = docx.Document(); d.add_heading("Agreement", 1); d.add_paragraph(""); d.add_paragraph("Notify within 48 hours.")
+d.save("/tmp/a.docx")
+o = OpenDocumentText(); o.text.addElement(H(outlinelevel=1, text="Title")); o.text.addElement(P(text=""))
+o.text.addElement(P(text="Signed by Ada.")); o.save("/tmp/a.odt")
+json.dump({"items": [{"id": "X-1", "v": 1}, {"id": "X-2", "v": 2}]}, open("/tmp/a.json", "w"))
+open("/tmp/a.jsonl", "w").write('{"a": 1}\\n{"agent": "devops-07"}\\n')
+open("/tmp/r.csv", "w").write('request_id,actor\\nRQ-1,"ext, partner"\\nRQ-2,int\\n')
+"""
+
+
+def test_passes_the_helpers_cite_every_format_with_its_locator(box: TaskSandbox, rec: Recorder):
+    run_ok(box, rec, HELPER_FILES)
+    code = (
+        "import json\n"
+        "print(json.dumps([cite('/tmp/a.xlsx', 'TOK-2', column='token'), cite('/tmp/a.docx', '48 hours'),"
+        " cite('/tmp/a.odt', 'Ada'), cite('/tmp/a.json', 'X-2'), cite('/tmp/a.jsonl', 'devops-07'),"
+        " cite('/tmp/r.csv', 'ext, partner'), cite('/logs/access/requests.csv', 'R-2', 'id')]))"
+    )
+    assert json.loads(run_ok(box, rec, code)) == [
+        [{"path": "/tmp/a.xlsx", "sheet": "Alerts", "row": 5}],
+        [{"path": "/tmp/a.docx", "paragraph": 2}],
+        [{"path": "/tmp/a.odt", "paragraph": 2}],
+        [{"path": "/tmp/a.json", "record": "X-2"}],
+        [{"path": "/tmp/a.jsonl", "line": 2}],
+        [{"path": "/tmp/r.csv", "record": "RQ-1"}],
+        [{"path": "/logs/access/requests.csv", "record": "R-2"}],
+    ]
+    shown = run_ok(box, rec, "print(text('/tmp/a.xlsx'))")
+    assert "sheet=Alerts row=5| A-2 | TOK-2 | closed (hidden row)" in shown
+    hits = run_ok(box, rec, "print([(h['path'], h.get('line')) for h in grep('devops-07', '/tmp')])")
+    assert hits == "[('/tmp/a.jsonl', 2)]"
+    assert run_ok(box, rec, "print(sh('grep -c R- /logs/access/requests.csv').strip())") == "2"

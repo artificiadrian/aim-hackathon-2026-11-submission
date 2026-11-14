@@ -40,7 +40,7 @@ explicit-preview-rules = true
 select = ["E", "F", "W", "I", "UP", "B", "S", "DTZ", "G", "LOG", "PT", "SIM", "TRY", "RUF", "TID", "PLW1510", "PLW1514"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101"]
+"tests/**" = ["S101", "S108"]  # S108: /tmp paths in tests are inside the sandbox chroot
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"
@@ -55,7 +55,7 @@ typeCheckingMode = "recommended"
 reportUnusedCallResult = false
 reportImplicitOverride = "error"
 reportMatchNotExhaustive = "error"
-include = ["src", "tests"]
+include = ["src", "tests"]  # sandbox/ runs on the image's system Python (pandas, ...): tested in the image
 # Given organiser code, kept as is (see AGENTS.md).
 exclude = ["tests/mock_server.py"]
 

@@ -18,6 +18,7 @@ RUN uv pip install --system --no-cache \
     && rm -rf /usr/local/bin/pip* /usr/local/lib/python3.12/site-packages/pip* /root/.cache \
     && python -c "import pandas, openpyxl, odf, docx, pypdf, PIL, yaml, zoneinfo; zoneinfo.ZoneInfo('Europe/Berlin')"
 COPY sandbox/sitecustomize.py /usr/local/lib/python3.12/site-packages/sitecustomize.py
+COPY sandbox/ws.py /usr/local/lib/python3.12/site-packages/ws.py
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

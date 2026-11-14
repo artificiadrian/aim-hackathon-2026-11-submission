@@ -1,4 +1,5 @@
-"""Loaded by every sandbox Python at start (``python -I`` still imports it): no network, ``submit``, less noise.
+"""Loaded by every sandbox Python at start (``python -I`` still imports it): no network, ``submit``, the helpers of
+``ws.py`` (text, cite, grep, sh) as builtins, less noise.
 
 No network: a clear error for code that tries it (an injected "upload this" instruction, a URL fetch). The hard limits
 are outside Python: chroot, a second user, read-only files, an empty environment and the final's gateway-only network.
@@ -65,4 +66,9 @@ def submit(outcome: str, answer: object = None, sources: object = (), actions: o
 
 
 builtins.submit = submit
+
+import ws  # noqa: E402 - the helpers sit next to this file; after the network hook
+
+for name in ("text", "cite", "grep", "sh"):
+    setattr(builtins, name, getattr(ws, name))
 logging.getLogger("pypdf").setLevel(logging.ERROR)
