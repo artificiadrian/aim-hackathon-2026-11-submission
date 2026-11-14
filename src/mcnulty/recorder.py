@@ -11,15 +11,14 @@ import json
 import re
 import threading
 import time
+import traceback
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, override
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, PrivateAttr
 
 INLINE_MAX = 64_000  # bytes
-SECRET_PATTERN = re.compile(
-    r"(arena_[A-Za-z0-9_-]{8,}|sk-or-[A-Za-z0-9-]{16,}|Bearer\s+[A-Za-z0-9._-]{8,})"
-)
+SECRET_PATTERN = re.compile(r"(arena_[A-Za-z0-9_-]{8,}|sk-or-[A-Za-z0-9-]{16,}|Bearer\s+[A-Za-z0-9._-]{8,})")
 
 
 class Frozen(BaseModel):
@@ -46,6 +45,64 @@ class BlobRef(Frozen):
 Body = Annotated[JsonBody | TextBody | BlobRef, Field(discriminator="kind")]
 
 
+# --- errors -------------------------------------------------------------------------------------------
+REPR_MAX = 2_000  # characters per local variable or attribute
+
+
+def short_repr(value: object):
+    try:
+        text = repr(value)
+    except Exception as e:
+        text = f"<repr failed: {type(e).__name__}>"
+    return text if len(text) <= REPR_MAX else text[:REPR_MAX] + f"... [{len(text)} chars]"
+
+
+class Frame(Frozen):
+    file: str
+    line: int | None
+    function: str
+    code: str | None
+    locals: dict[str, str]  # name -> repr, cut to REPR_MAX
+
+
+class ErrorInfo(Frozen):
+    """An exception with everything it carries: type, message, attributes, notes, traceback with locals, and the
+    exception it came from (``raise ... from`` or raised while handling another)."""
+
+    type: str  # qualified name, e.g. "httpx.ConnectError"
+    message: str
+    attributes: dict[str, str]  # public instance attributes (e.g. status), as repr
+    notes: tuple[str, ...]
+    frames: tuple[Frame, ...]  # outermost first
+    cause: "ErrorInfo | None"
+
+    @classmethod
+    def from_exception(cls, e: BaseException, depth: int = 0) -> "ErrorInfo":
+        frames = tuple(
+            Frame(
+                file=summary.filename,
+                line=summary.lineno,
+                function=summary.name,
+                code=summary.line,
+                locals={k: short_repr(v) for k, v in frame.f_locals.items() if not k.startswith("__")},
+            )
+            for frame, summary in zip(
+                (f for f, _ in traceback.walk_tb(e.__traceback__)),
+                traceback.extract_tb(e.__traceback__),
+                strict=True,
+            )
+        )
+        chained = e.__cause__ or (None if e.__suppress_context__ else e.__context__)
+        return cls(
+            type=f"{type(e).__module__}.{type(e).__qualname__}",
+            message=str(e),
+            attributes={k: short_repr(v) for k, v in vars(e).items() if not k.startswith("_")},
+            notes=tuple(getattr(e, "__notes__", ())),
+            frames=frames,
+            cause=cls.from_exception(chained, depth + 1) if chained is not None and depth < 10 else None,
+        )
+
+
 # --- events -------------------------------------------------------------------------------------------
 class CliStarted(Frozen):
     kind: Literal["cli_started"] = "cli_started"
@@ -69,7 +126,7 @@ class HttpFailed(Frozen):
     method: str
     path: str
     request: JsonValue
-    error: str
+    error: ErrorInfo
 
 
 class LlmExchange(Frozen):
@@ -87,12 +144,16 @@ class LlmFailed(Frozen):
     kind: Literal["llm_failed"] = "llm_failed"
     url: str
     request: JsonValue
-    error: str
+    error: ErrorInfo
 
 
 class TaskCrashed(Frozen):
     kind: Literal["task_crashed"] = "task_crashed"
-    error: str
+    error: ErrorInfo
+
+    @classmethod
+    def from_exception(cls, e: BaseException):
+        return cls(error=ErrorInfo.from_exception(e))
 
 
 Event = Annotated[
@@ -118,7 +179,8 @@ class EventLog(BaseModel):
     _seq: itertools.count = PrivateAttr(default_factory=lambda: itertools.count(1))
     _t0: float = PrivateAttr(default_factory=time.time)
 
-    def model_post_init(self, context: object) -> None:
+    @override
+    def model_post_init(self, context: object):
         (self.run_dir / "blobs").mkdir(parents=True, exist_ok=True)
 
     def redact(self, text: str):

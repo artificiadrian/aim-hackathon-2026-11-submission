@@ -12,12 +12,50 @@ dependencies = [
     "python-dotenv>=1.2.4",
 ]
 
+[project.scripts]
+mcnulty = "mcnulty.cli:main"
+
 [dependency-groups]
-dev = ["pytest>=9.2.0"]
+dev = [
+    "basedpyright>=1.40.2",
+    "pytest>=9.2.0",
+    "ruff>=0.17.5",
+]
 
 [build-system]
 requires = ["uv_build>=0.13.8,<0.14"]
 build-backend = "uv_build"
 
-[tool.pytest.ini_options]
+[tool.ruff]
+# Wider than the default 88: log lines and error messages with run ids read better unwrapped.
+line-length = 120
+# Given organiser code, kept as is.
+extend-exclude = ["tests/mock_server.py"]
+
+[tool.ruff.lint]
+# Preview rules run only when selected by their full code.
+preview = true
+explicit-preview-rules = true
+select = ["E", "F", "W", "I", "UP", "B", "S", "DTZ", "G", "LOG", "PT", "SIM", "TRY", "RUF", "TID", "PLW1510", "PLW1514"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"__future__.annotations".msg = "Write annotations without it."
+
+[tool.basedpyright]
+typeCheckingMode = "standard"
+reportImplicitOverride = "error"
+reportMatchNotExhaustive = "error"
+include = ["src", "tests"]
+# Given organiser code, kept as is (see AGENTS.md).
+exclude = ["tests/mock_server.py"]
+
+[tool.pytest]
+strict = true
+filterwarnings = ["error"]
 testpaths = ["tests"]

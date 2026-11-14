@@ -26,5 +26,5 @@ WORKDIR /app
 COPY --chown=harness:harness . .
 RUN uv sync --frozen --no-dev && rm -rf /home/harness/.cache
 
-ENTRYPOINT ["python", "-m", "mcnulty"]
+ENTRYPOINT ["mcnulty", "run"]
 CMD []

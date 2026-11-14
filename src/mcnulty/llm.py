@@ -10,7 +10,7 @@ from typing import Annotated, Literal
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, PrivateAttr
 
-from mcnulty.recorder import Frozen, LlmExchange, LlmFailed, Recorder
+from mcnulty.recorder import ErrorInfo, Frozen, LlmExchange, LlmFailed, Recorder
 from mcnulty.settings import Settings
 
 MAIN_MODEL = "google/gemma-4-31b-it"
@@ -29,11 +29,21 @@ type ReasoningEffort = Literal["none", "low", "medium", "high"]
 
 
 class LLMError(RuntimeError):
-    pass
+    def __init__(self, url: str, status: int | None, detail: object):
+        super().__init__(f"{url} -> {status}: {detail}")
+        self.status = status
 
 
 class BudgetExhausted(LLMError):
     """403 from OpenRouter: the key's limit is reached. Every later call fails too, so stop calling models."""
+
+
+class RetriesExhausted(LLMError):
+    """Every retry failed; ``detail`` holds the last error."""
+
+
+class MalformedReply(LLMError):
+    """A 200 response without the expected content."""
 
 
 class Usage(BaseModel):
@@ -164,7 +174,7 @@ class OpenRouterClient(BaseModel):
                 r = self.http.post(url, json=body, timeout=timeout)
             except httpx.TransportError as e:
                 last = f"{type(e).__name__}: {e}"
-                rec.log(LlmFailed(url=url, request=body, error=last))
+                rec.log(LlmFailed(url=url, request=body, error=ErrorInfo.from_exception(e)))
             else:
                 ms = int((time.time() - t0) * 1000)
                 response = rec.body(r.content, r.headers.get("content-type", ""))
@@ -183,7 +193,7 @@ class OpenRouterClient(BaseModel):
                         return data
                     last = f"upstream error: {data['error']}"  # OpenRouter sometimes returns 200 + error
                 elif r.status_code == 403:
-                    raise BudgetExhausted(f"{url} -> 403: {r.text[:300]}")
+                    raise BudgetExhausted(url, 403, r.text[:300])
                 elif (
                     r.status_code in (408, 429)
                     or r.status_code >= 500
@@ -192,10 +202,10 @@ class OpenRouterClient(BaseModel):
                     last = f"{r.status_code}: {r.text[:300]}"
                     wait = min(float(r.headers.get("retry-after", 0) or 0), 120.0)
                 else:
-                    raise LLMError(f"{url} -> {r.status_code}: {r.text[:500]}")
+                    raise LLMError(url, r.status_code, r.text[:500])
             if attempt < RETRIES:
                 time.sleep(max(min(2 * 2**attempt, 30), wait))
-        raise LLMError(f"{url} failed after retries: {last}")
+        raise RetriesExhausted(url, None, last)
 
     def chat(
         self,
@@ -224,64 +234,46 @@ class OpenRouterClient(BaseModel):
             body["tool_choice"] = "auto"
         if response_format is not None:
             body["response_format"] = response_format
-        data = self.post(rec, f"{self.base_url}/chat/completions", body)
+        url = f"{self.base_url}/chat/completions"
+        data = self.post(rec, url, body)
         if not data.get("choices"):
-            raise LLMError(f"no choices in response: {str(data)[:300]}")
+            raise MalformedReply(url, 200, str(data)[:300])
         usage = Usage.model_validate(data.get("usage") or {})
         self.tracker.add(MAIN_MODEL, usage)
         choice = data["choices"][0]
         message = choice["message"]
         return ChatReply(
             content=message.get("content"),
-            tool_calls=tuple(
-                ToolCall.model_validate(c) for c in message.get("tool_calls") or ()
-            ),
+            tool_calls=tuple(ToolCall.model_validate(c) for c in message.get("tool_calls") or ()),
             finish_reason=choice.get("finish_reason"),
             usage=usage,
         )
 
-    def describe_image(
-        self, rec: Recorder, data_url: str, question: str, max_tokens: int = 700
-    ):
+    def describe_image(self, rec: Recorder, data_url: str, question: str, max_tokens: int = 700):
         """One vision call on an image passed as a base64 data URL."""
         content = [
             {"type": "text", "text": question},
             {"type": "image_url", "image_url": {"url": data_url}},
         ]
-        return (
-            self.chat(
-                rec, [{"role": "user", "content": content}], max_tokens=max_tokens
-            ).content
-            or ""
-        )
+        return self.chat(rec, [{"role": "user", "content": content}], max_tokens=max_tokens).content or ""
 
     def embed(self, rec: Recorder, texts: list[str]):
         """Embedding vectors for ``texts`` in one request."""
-        data = self.post(
-            rec,
-            f"{self.base_url}/embeddings",
-            {"model": EMBED_MODEL, "input": list(texts)},
-        )
+        url = f"{self.base_url}/embeddings"
+        data = self.post(rec, url, {"model": EMBED_MODEL, "input": list(texts)})
         self.tracker.add(EMBED_MODEL, Usage.model_validate(data.get("usage") or {}))
         rows = sorted(data["data"], key=lambda d: d["index"])
         if len(rows) != len(texts):
-            raise LLMError(f"expected {len(texts)} embeddings, got {len(rows)}")
+            raise MalformedReply(url, 200, {"embeddings_expected": len(texts), "received": len(rows)})
         return [row["embedding"] for row in rows]
 
-    def decide(
-        self, rec: Recorder, state: JsonValue, questions: dict[str, JevQuestion]
-    ):
+    def decide(self, rec: Recorder, state: JsonValue, questions: dict[str, JevQuestion]):
         """Ask Jev typed questions about ``state``; returns ``{name: JevAnswer}``. Keep ``state`` under ~32 KB."""
         body = {
             "model": JEV_MODEL,
             "state": state,
-            "questions": {
-                name: q.model_dump(mode="json") for name, q in questions.items()
-            },
+            "questions": {name: q.model_dump(mode="json") for name, q in questions.items()},
         }
         data = self.post(rec, self.jev_url, body, timeout=60.0)
         self.tracker.add(JEV_MODEL, Usage.model_validate(data.get("usage") or {}))
-        return {
-            name: JevAnswer.model_validate(a)
-            for name, a in (data.get("answers") or {}).items()
-        }
+        return {name: JevAnswer.model_validate(a) for name, a in (data.get("answers") or {}).items()}

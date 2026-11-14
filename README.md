@@ -6,7 +6,7 @@ Team-10 harness for Harness Arena: an agent that solves the incident tasks of th
 ```bash
 cp .env.example .env    # fill in ARENA_API_KEY and OPENROUTER_API_KEY
 uv sync
-uv run python -m mcnulty --note "<hypothesis>" --tasks t01
+uv run mcnulty run --note "<hypothesis>" --tasks t01
 ```
 
 Every run writes all requests and responses to `runs/<UTC time>/events.jsonl`. Platform spec: `docs/ARENA_DOCS.md`.

@@ -1,6 +1,7 @@
 """Task API client (``{ARENA_BASE_URL}/api/v1``) and its data models. Every request is logged to a Recorder."""
 
 import hashlib
+import shutil
 import subprocess
 import tempfile
 import time
@@ -11,7 +12,7 @@ from typing import Literal
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
-from mcnulty.recorder import Frozen, HttpExchange, HttpFailed, Recorder
+from mcnulty.recorder import ErrorInfo, Frozen, HttpExchange, HttpFailed, Recorder
 from mcnulty.settings import REPO_ROOT, Settings
 
 type Outcome = Literal["OK", "DENIED_SECURITY", "NEEDS_CLARIFICATION", "UNSUPPORTED"]
@@ -142,6 +143,16 @@ class ArenaError(RuntimeError):
         self.status = status
 
 
+class PlatformUnreachable(ArenaError):
+    def __init__(self, cause: Exception):
+        super().__init__(f"cannot reach the platform ({type(cause).__name__}: {cause})")
+
+
+class BlobMismatch(ArenaError):
+    def __init__(self, sha256: str):
+        super().__init__(f"blob {sha256[:12]} does not match its sha256")
+
+
 # --- blob cache ---------------------------------------------------------------------------------------
 class BlobCache(Frozen):
     """Content-addressed files: ``<root>/<sha256>``. A blob never goes stale, so runs and tasks share it."""
@@ -153,24 +164,18 @@ class BlobCache(Frozen):
         if not path.exists():
             return None
         data = path.read_bytes()
-        if (
-            hashlib.sha256(data).hexdigest() != sha256
-        ):  # damaged on disk: download again
+        if hashlib.sha256(data).hexdigest() != sha256:  # damaged on disk: download again
             path.unlink(missing_ok=True)
             return None
         return data
 
     def put(self, sha256: str, data: bytes):
         if hashlib.sha256(data).hexdigest() != sha256:
-            raise ArenaError(f"blob {sha256[:12]} does not match its sha256")
+            raise BlobMismatch(sha256)
         self.root.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(
-            dir=self.root, prefix=f".{sha256[:16]}.", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(dir=self.root, prefix=f".{sha256[:16]}.", delete=False) as f:
             f.write(data)
-        Path(f.name).replace(
-            self.root / sha256
-        )  # atomic: parallel writers never see half a file
+        Path(f.name).replace(self.root / sha256)  # atomic: parallel writers never see half a file
 
 
 # --- client -------------------------------------------------------------------------------------------
@@ -185,9 +190,7 @@ class ArenaClient(BaseModel):
     def connect(cls, settings: Settings):
         http = httpx.Client(
             base_url=f"{settings.arena_base_url.rstrip('/')}/api/v1",
-            headers={
-                "Authorization": f"Bearer {settings.arena_api_key.get_secret_value()}"
-            },
+            headers={"Authorization": f"Bearer {settings.arena_api_key.get_secret_value()}"},
             timeout=60.0,
         )
         return cls(http=http, cache=BlobCache(root=settings.blob_cache))
@@ -206,12 +209,10 @@ class ArenaClient(BaseModel):
                         method=method,
                         path=path,
                         request=body,
-                        error=f"{type(e).__name__}: {e}",
+                        error=ErrorInfo.from_exception(e),
                     )
                 )
-                last = ArenaError(
-                    f"cannot reach the platform ({type(e).__name__}: {e})"
-                )
+                last = PlatformUnreachable(e)
             else:
                 ms = int((time.time() - t0) * 1000)
                 response = rec.body(r.content, r.headers.get("content-type", ""))
@@ -265,20 +266,14 @@ class ArenaClient(BaseModel):
         args: dict[str, JsonValue],
     ):
         """``{ok, result}`` or ``{ok: false, error}``: tool-level errors are data, not exceptions."""
-        return self.send(
-            rec, "POST", f"/runs/{run_id}/tasks/{task_id}/tools/{tool}", args
-        ).json()
+        return self.send(rec, "POST", f"/runs/{run_id}/tasks/{task_id}/tools/{tool}", args).json()
 
     def run_manifest(self, rec: Recorder, run_id: str):
-        return RunManifest.model_validate(
-            self.send(rec, "GET", f"/runs/{run_id}/manifest").json()
-        )
+        return RunManifest.model_validate(self.send(rec, "GET", f"/runs/{run_id}/manifest").json())
 
     def task_manifest(self, rec: Recorder, run_id: str, task_id: str):
         """A task's files in their current state (after writes and containment changes)."""
-        return TaskManifest.model_validate(
-            self.send(rec, "GET", f"/runs/{run_id}/tasks/{task_id}/manifest").json()
-        )
+        return TaskManifest.model_validate(self.send(rec, "GET", f"/runs/{run_id}/tasks/{task_id}/manifest").json())
 
     def blob(self, rec: Recorder, run_id: str, sha256: str, task_id: str | None = None):
         data = self.cache.get(sha256)
@@ -286,8 +281,7 @@ class ArenaClient(BaseModel):
             data = self.send(
                 rec,
                 "GET",
-                f"/runs/{run_id}/blobs/{sha256}"
-                + (f"?task={task_id}" if task_id else ""),
+                f"/runs/{run_id}/blobs/{sha256}" + (f"?task={task_id}" if task_id else ""),
             ).content
             self.cache.put(sha256, data)
         return data
@@ -317,34 +311,22 @@ class ArenaClient(BaseModel):
             "sources": [s.model_dump(exclude_none=True) for s in submission.sources],
         }
         return SubmitResult.model_validate(
-            self.send(
-                rec, "POST", f"/runs/{run_id}/tasks/{task_id}/submit", body
-            ).json()
+            self.send(rec, "POST", f"/runs/{run_id}/tasks/{task_id}/submit", body).json()
         )
 
     def finish(self, rec: Recorder, run_id: str):
-        return RunStatus.model_validate(
-            self.send(rec, "POST", f"/runs/{run_id}/finish").json()
-        )
+        return RunStatus.model_validate(self.send(rec, "POST", f"/runs/{run_id}/finish").json())
 
 
 def git_meta(cwd: Path = REPO_ROOT):
     """``RunMeta`` with the commit and dirty flag of the checkout, or empty outside git."""
+    git = shutil.which("git")
+    if git is None:
+        return RunMeta()
     try:
-        commit = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=cwd,
-            check=True,
-            text=True,
-            capture_output=True,
-        )
-        status = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=cwd,
-            check=True,
-            text=True,
-            capture_output=True,
-        )
+        # fixed arguments, no shell
+        commit = subprocess.run([git, "rev-parse", "HEAD"], cwd=cwd, check=True, text=True, capture_output=True)  # noqa: S603
+        status = subprocess.run([git, "status", "--porcelain"], cwd=cwd, check=True, text=True, capture_output=True)  # noqa: S603
     except (OSError, subprocess.CalledProcessError):
         return RunMeta()
     return RunMeta(commit=commit.stdout.strip(), dirty=bool(status.stdout.strip()))

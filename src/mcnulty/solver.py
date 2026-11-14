@@ -7,7 +7,5 @@ from mcnulty.recorder import Recorder
 FALLBACK = Submission(outcome="UNSUPPORTED", answer=None)
 
 
-def solve(
-    rec: Recorder, arena: ArenaClient, llm: OpenRouterClient, run_id: str, task: Task
-):
+def solve(rec: Recorder, arena: ArenaClient, llm: OpenRouterClient, run_id: str, task: Task):
     return FALLBACK

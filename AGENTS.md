@@ -8,10 +8,10 @@ The platform spec is `docs/ARENA_DOCS.md`; read it before you change Task API or
 
 ```bash
 uv sync
-uv run python -m mcnulty --note "<hypothesis>" --tasks t01,t03   # or --level 1, --match '<regex>', --seed <seed>
-uv run python -m mcnulty --collect --note "collect"              # $0: download all files, no submits, reveal answers
-uv run pytest                                                    # offline, against tests/mock_server.py
-uvx ruff check --fix src tests && uvx ruff format src tests && uvx pyright --pythonpath .venv/bin/python src
+uv run mcnulty run --note "<hypothesis>" --tasks t01,t03   # or --level 1, --match '<regex>', --seed <seed>
+uv run mcnulty collect --note "collect"                    # $0: download all files, no submits, reveal answers
+uv run mcnulty check                                       # live check of every API, < $0.01
+uv run ruff check --fix && uv run ruff format && uv run basedpyright && uv run pytest   # in this order
 ```
 
 ## Hard rules
@@ -42,7 +42,7 @@ uvx ruff check --fix src tests && uvx ruff format src tests && uvx pyright --pyt
 
 ## Container and submit
 
-- The organisers build `Dockerfile` and run `python -m mcnulty` with `ARENA_RUN_KIND`, `ARENA_BASE_URL`,
+- The organisers build `Dockerfile` and run `mcnulty run` with `ARENA_RUN_KIND`, `ARENA_BASE_URL`,
   `ARENA_API_KEY`, `OPENROUTER_BASE_URL` and `OPENROUTER_API_KEY` set. Limits: 30 minutes, $3, 2 CPUs, 4 GB.
 - Submit each task as soon as it is solved, and always submit something: unsubmitted tasks score 0.
 - Only stdout comes back from the final container: keep one short line per task.
