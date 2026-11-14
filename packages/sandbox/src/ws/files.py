@@ -10,7 +10,35 @@ from typing import cast, final, override
 from ws.formats import JSON, read_text, units, visible, with_decoded
 from ws.models import Hit, Source, Unit
 
-SKIPPED = frozenset({"bin", "sbin", "lib", "lib32", "lib64", "libx32", "usr", "etc", "tmp", "proc", "dev"})
+# system and scratch folders; also those only outside a chroot (the harness's open mode when capabilities are dropped)
+SKIPPED = frozenset(
+    {
+        "bin",
+        "sbin",
+        "lib",
+        "lib32",
+        "lib64",
+        "libx32",
+        "usr",
+        "etc",
+        "tmp",
+        "proc",
+        "dev",
+        "sys",
+        "app",
+        "sandbox",
+        "run",
+        "var",
+        "root",
+        "home",
+        "opt",
+        "boot",
+        "srv",
+        "mnt",
+        "media",
+        ".dockerenv",
+    }
+)
 
 
 def resolve(source: Source):
@@ -114,9 +142,10 @@ def column_indexes(found: list[Unit], column: str):
 def files_under(root: Path):
     if root.is_file():
         return [root]
-    top = root == Path("/")  # a search from / skips the system folders and the scratch folder
-    found = (p for p in root.rglob("*") if p.is_file())
-    return sorted(p for p in found if not (top and p.parts[1] in SKIPPED))
+    if root == Path("/"):  # a search from / skips the system folders and the scratch folder, without walking them
+        tops = [p for p in root.iterdir() if p.name not in SKIPPED]
+        return sorted(f for p in tops for f in ([p] if p.is_file() else p.rglob("*")) if f.is_file())
+    return sorted(p for p in root.rglob("*") if p.is_file())
 
 
 TABLES = (".csv", ".jsonl", ".xlsx", ".xlsm", ".ods")

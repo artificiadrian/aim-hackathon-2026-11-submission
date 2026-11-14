@@ -46,6 +46,7 @@ from mcnulty.frozen import Frozen
 from mcnulty.record.events import FileSkipped, SandboxRan, Stream
 from mcnulty.record.log import Recorder
 
+CHROOT = "/usr/sbin/chroot"
 KERNEL = Path("/usr/local/lib/python3.12/site-packages/ws/kernel.py")  # packages/sandbox, only in the Docker image
 BASE = Path("/sandbox/base")
 COPIED = ("bin", "sbin", "lib", "lib32", "lib64", "libx32", "usr", "etc")  # those the root has; links stay links
@@ -77,6 +78,12 @@ ENV = {
     "OPENBLAS_NUM_THREADS": "1",
     "OMP_NUM_THREADS": "1",
 }
+# Open mode, when the container allows no chroot or user switch (the organisers drop capabilities): cells run without
+# isolation at the real workspace paths, one at a time; before each cell its task's files are placed there and the
+# files another task placed are removed. Top folders that are never workspace paths:
+PROTECTED = frozenset(
+    {*COPIED, "app", "proc", "sys", "dev", "sandbox", "tmp", "root", "run", "var", "home", "opt", "boot"}
+)
 RECORD_MAX = 200_000  # bytes of each stream kept in the record and in memory (head and tail)
 
 
@@ -146,6 +153,10 @@ class SandboxPool:
     base_lock: threading.Lock = field(default_factory=threading.Lock)
     free_uids: set[int] = field(default_factory=lambda: set(range(FIRST_UID, FIRST_UID + UIDS)))
     uid_lock: threading.Lock = field(default_factory=threading.Lock)
+    mode: list[bool] = field(default_factory=list)  # [True]: chroot works, [False]: open mode; empty until checked
+    mode_lock: threading.Lock = field(default_factory=threading.Lock)
+    open_lock: threading.Lock = field(default_factory=threading.Lock)  # open mode: one cell at a time
+    placed: dict[Path, Path] = field(default_factory=dict)  # open mode: workspace path -> blob placed there now
 
     def take_uid(self):
         with self.uid_lock:
@@ -182,6 +193,33 @@ def ensure_base(pool: SandboxPool):
         except PermissionError:  # no MKNOD capability (the final container drops some, demo check 16:10)
             pass  # the kernel falls back to a pipe; model code that opens /dev/null gets an error
         partial.rename(BASE)
+
+
+def confined(pool: SandboxPool):
+    """Whether cells can run in a chroot as their own uid here; checked once per process."""
+    with pool.mode_lock:
+        if not pool.mode:
+            try:
+                ensure_base(pool)
+                probe = [CHROOT, f"--userspec={FIRST_UID}:{FIRST_UID}", str(BASE), "/usr/local/bin/python3", "-c", ""]
+                pool.mode.append(subprocess.run(probe, capture_output=True, check=False).returncode == 0)  # noqa: S603
+            except (OSError, subprocess.CalledProcessError):
+                pool.mode.append(False)
+        return pool.mode[0]
+
+
+def swap_in(pool: SandboxPool, files: dict[Path, Path]):
+    """Open mode: the task's files at their real paths, read-only; files of other tasks removed."""
+    for target in [t for t in pool.placed if t not in files]:
+        target.unlink(missing_ok=True)
+        del pool.placed[target]
+    for target, source in files.items():
+        if pool.placed.get(target) == source and target.exists():
+            continue
+        target.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+        target.unlink(missing_ok=True)
+        place(source, target)
+        pool.placed[target] = source
 
 
 def read_stream(file: BinaryIO):
@@ -261,6 +299,7 @@ class TaskSandbox:
     pool: SandboxPool
     idle: float = IDLE_MAX
     session: Session = field(default_factory=Session)
+    open_files: dict[Path, Path] | None = None  # open mode: workspace path -> blob; None in a chroot
 
     @classmethod
     def create(
@@ -277,6 +316,21 @@ class TaskSandbox:
         Paths are data: one that leaves the task root (``..``, or a link in the system folders) is skipped, since the
         harness writes as root.
         """
+        if not confined(pool):
+            open_files: dict[Path, Path] = {}
+            for path, sha in files.items():
+                source, target = blobs.root / sha, Path(path)
+                if not source.is_file():
+                    rec.log(FileSkipped(path=path, reason="not_downloaded"))
+                elif (
+                    not target.is_absolute()
+                    or ".." in target.parts
+                    or target.parts[1:2] in ((), *((p,) for p in PROTECTED))
+                ):
+                    rec.log(FileSkipped(path=path, reason="outside_root"))
+                else:
+                    open_files[target] = source
+            return cls(root=Path("/"), uid=-1, pool=pool, idle=idle, open_files=open_files)
         ensure_base(pool)
         root = TASKS / task_id
         shutil.rmtree(root, ignore_errors=True)
@@ -307,7 +361,12 @@ class TaskSandbox:
             rec.log(event)
             return event
         try:
-            event = self.run_now(code, timeout)
+            if self.open_files is None:
+                event = self.run_now(code, timeout)
+            else:
+                with self.pool.open_lock:
+                    swap_in(self.pool, self.open_files)
+                    event = self.run_now(code, timeout)
         finally:
             self.pool.slots.release()
         rec.log(event)
@@ -336,9 +395,10 @@ class TaskSandbox:
                     if session.lost != "idle":
                         break
                 alive = session.process.pid if session.process is not None else None
-                kill_uid(self.uid, keep=alive)  # children the cell left behind; the kernel stays
+                if self.open_files is None:
+                    kill_uid(self.uid, keep=alive)  # children the cell left behind; the kernel stays
                 tmp = self.root / "tmp"
-                tmp_cleared = tree_bytes(tmp) > TMP_MAX
+                tmp_cleared = self.open_files is None and tree_bytes(tmp) > TMP_MAX
                 if tmp_cleared:
                     shutil.rmtree(tmp, ignore_errors=True)
                     tmp.mkdir()
@@ -373,11 +433,9 @@ class TaskSandbox:
             "1000",  # out of memory: the kernel kills the task's session before the harness
             "--",
             "/usr/bin/prlimit",
-            *LIMITS,
+            *(LIMITS if self.open_files is None else [x for x in LIMITS if not x.startswith("--nproc")]),
             "--",
-            "/usr/sbin/chroot",
-            f"--userspec={self.uid}:{self.uid}",
-            str(self.root),
+            *([] if self.open_files is not None else [CHROOT, f"--userspec={self.uid}:{self.uid}", str(self.root)]),
             "/usr/local/bin/python3",
             "-I",
             "-m",
@@ -392,6 +450,7 @@ class TaskSandbox:
                 stderr=err,
                 pass_fds=(theirs.fileno(),),
                 env=ENV,
+                cwd=str(self.root),
                 start_new_session=True,  # its own process group, so one kill ends its children too
             )
         session.channel = mine
@@ -427,14 +486,19 @@ class TaskSandbox:
         if session.channel is not None:
             session.channel.close()
             session.channel = None
-        kill_uid(self.uid)
+        if self.open_files is None:
+            kill_uid(self.uid)
+        elif session.process is not None:
+            with suppress(OSError):
+                os.killpg(session.process.pid, signal.SIGKILL)  # its own process group (start_new_session)
         process, session.process = session.process, None
         return process.wait() if process is not None else None
 
     def remove(self):
         self.stop_kernel()
-        shutil.rmtree(self.root, ignore_errors=True)
-        self.pool.give_uid(self.uid)
+        if self.open_files is None:  # open mode: the root is / itself
+            shutil.rmtree(self.root, ignore_errors=True)
+            self.pool.give_uid(self.uid)
 
 
 def not_started(code: str, waited: float):
