@@ -5,11 +5,7 @@ description = "Team-10 harness for Harness Arena"
 requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.28.1",
-    "openpyxl>=3.1.5",
-    "pillow>=13.0.0",
     "pydantic>=2.14.3",
-    "pypdf>=6.20.0",
-    "python-docx>=1.2.0",
     "python-dotenv>=1.2.4",
 ]
 
@@ -19,6 +15,7 @@ mcnulty = "mcnulty.cli:main"
 [dependency-groups]
 dev = [
     "basedpyright>=1.40.2",
+    "pypdf>=6.20.0,<7",
     "pytest>=9.2.0",
     "ruff>=0.17.5",
 ]
