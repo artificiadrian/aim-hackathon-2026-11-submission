@@ -1,9 +1,11 @@
 """The agent's pure parts (prompt, submit): submit parsing, the locator check, the file tree, the shortened history."""
 
+import hashlib
 import json
+from pathlib import Path
 
 from mcnulty.agent.citations import fixed_sources, line_records
-from mcnulty.agent.loop import closed
+from mcnulty.agent.loop import NOT_TEXT, TaskFiles, closed
 from mcnulty.agent.prompt import OUTPUT_MAX, SYSTEM, file_tree, first_message, script_output, shorten_old_outputs
 from mcnulty.agent.submit import (
     Accepted,
@@ -14,6 +16,7 @@ from mcnulty.agent.submit import (
     parse_submit,
     salvage_submit,
 )
+from mcnulty.blobs import BlobCache
 from mcnulty.clients.arena import Source
 from mcnulty.clients.openrouter import Message, ToolMessage, UserMessage
 from mcnulty.record.events import SandboxRan, Stream
@@ -193,3 +196,16 @@ def test_nested_source_lists_are_flattened():
 def test_the_first_message_carries_the_table_columns():
     message = first_message("List the ids.", {}, {}, {"/a.csv": 10}, "/a.csv line=1| id | actor")
     assert message.endswith("table file and sheet) =====\n/a.csv line=1| id | actor")
+
+
+def test_a_scanned_ticket_is_never_inlined_as_text(tmp_path: Path):
+    """Live run 13:31: four tickets were JPEG scans; decoded as text they made a 316k-token first message."""
+    blobs = BlobCache(root=tmp_path)
+    scan, note = b"\xff\xd8\xff\xe0JFIF\x00binary", b"---\nstatus: open\n---\nList the ids."
+    files = {"/tickets/IR-1.jpg": hashlib.sha256(scan).hexdigest()}
+    files["/tickets/IR-2.md"] = hashlib.sha256(note).hexdigest()
+    blobs.put(files["/tickets/IR-1.jpg"], scan)
+    blobs.put(files["/tickets/IR-2.md"], note)
+    loaded = TaskFiles.load(files, blobs)
+    assert loaded.trusted["/tickets/IR-1.jpg"] == NOT_TEXT
+    assert loaded.trusted["/tickets/IR-2.md"].endswith("List the ids.")

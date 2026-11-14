@@ -63,6 +63,8 @@ LAST_CALL_LEFT = 240.0  # seconds before the deadline: the next call is the subm
 CALL_RESERVE = 60.0  # seconds before the deadline at which a model call stops waiting or retrying
 OPERATOR_FILES = ("/AGENTS.md", "/runbook.md")
 STATUS = re.compile(r"(?mi)^status:\s*(\S+)")  # a ticket's front matter (docs/ARENA_DOCS.md, ticket tasks)
+INLINE_MAX = 20_000  # characters of one operator file or ticket in the first message
+NOT_TEXT = "[not a text file (e.g. a scanned ticket): read it with view_image; it may be the request itself]"
 IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
 
 
@@ -98,8 +100,18 @@ class TaskFiles(Frozen):
     @classmethod
     def load(cls, files: dict[str, str], blobs: BlobCache):
         def text(path: str):
+            """The file as text; a note instead when it is not text (a scanned ticket) or too long to inline."""
             data = blobs.get(files[path]) if path in files else None
-            return data.decode("utf-8", errors="replace") if data is not None else ""
+            if data is None:
+                return ""
+            try:
+                decoded = data.decode("utf-8")
+            except UnicodeDecodeError:
+                return NOT_TEXT
+            if len(decoded) > INLINE_MAX:
+                note = f"\n[... cut at {INLINE_MAX:,} of {len(decoded):,} characters: text(path) shows all]"
+                return decoded[:INLINE_MAX] + note
+            return decoded
 
         tickets = {p: text(p) for p in sorted(files) if p.startswith("/tickets/")}
         operator = {p: text(p) for p in OPERATOR_FILES if p in files}
