@@ -137,7 +137,7 @@ class ChatRequest(Frozen):
     provider: Provider = Provider()
     reasoning: Reasoning | None = None
     tools: tuple[ToolDefinition, ...] | None = None
-    tool_choice: Literal["auto"] | None = None
+    tool_choice: Literal["auto", "required"] | None = None
 
 
 # --- Jev questions and answers ------------------------------------------------------------------------
@@ -308,15 +308,17 @@ class OpenRouterClient(BaseModel):
         max_tokens: int = 2048,
         temperature: float = 0.0,
         reasoning_effort: ReasoningEffort | None = None,
+        require_tool: bool = False,
     ):
-        """One chat/completions call on the fixed model. Thinking tokens count against ``max_tokens``."""
+        """One chat/completions call on the fixed model. Thinking tokens count against ``max_tokens``.
+        ``require_tool``: the reply must call one of ``tools``."""
         request = ChatRequest(
             messages=messages,
             max_tokens=max_tokens,
             temperature=temperature,
             reasoning=Reasoning(effort=reasoning_effort) if reasoning_effort else None,
             tools=tools or None,
-            tool_choice="auto" if tools else None,
+            tool_choice=("required" if require_tool else "auto") if tools else None,
         )
         response = self.post(rec, f"{self.base_url}/chat/completions", request, ChatResponse)
         self.tracker.add(MAIN_MODEL, response.usage)

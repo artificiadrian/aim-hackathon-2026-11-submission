@@ -1,7 +1,7 @@
 """The loop's pure parts: submit parsing, the locator check, the file tree and the shortened history."""
 
 from mcnulty.llm import Message, ToolMessage, UserMessage
-from mcnulty.solver import file_tree, missing_locators, parse_submit, shorten_old_outputs
+from mcnulty.solver import file_tree, missing_locators, parse_submit, salvage_submit, shorten_old_outputs
 
 
 def test_submit_answer_given_as_json_text_becomes_its_value():
@@ -32,3 +32,21 @@ def test_old_tool_outputs_are_shortened_and_the_latest_kept():
     assert isinstance(contents[1], str)
     assert len(contents[1]) < 700
     assert contents[2:] == [long, long]
+
+
+def test_sources_written_as_text_become_locators():
+    args = parse_submit(
+        '{"outcome": "OK", "answer": "x", "sources": ["/security/egress_export.csv:49", "/b.csv:TX-7 (C)", "/s.png"]}'
+    )
+    assert [s.model_dump(exclude_none=True) for s in args.sources] == [
+        {"path": "/security/egress_export.csv", "line": 49},
+        {"path": "/b.csv", "record": "TX-7"},
+        {"path": "/s.png"},
+    ]
+
+
+def test_last_step_submit_keeps_outcome_and_answer_when_the_rest_is_invalid():
+    args = salvage_submit('{"outcome": "OK", "answer": 5, "sources": [{"page": "x"}]}')
+    assert args is not None
+    assert (args.outcome, args.answer, args.sources) == ("OK", 5, ())
+    assert salvage_submit('{"outcome": "MAYBE"}') is None

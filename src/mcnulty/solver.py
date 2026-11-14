@@ -9,8 +9,9 @@ import base64
 import json
 from collections import Counter, defaultdict
 from pathlib import PurePosixPath
+from typing import Annotated
 
-from pydantic import JsonValue, ValidationError
+from pydantic import BeforeValidator, JsonValue, ValidationError
 
 from mcnulty.actions import Action, VettedAction, verified_contacts, vet
 from mcnulty.arena import BlobCache, Outcome, Source, Submission, Task
@@ -90,10 +91,21 @@ VIEW_IMAGE = ToolDefinition(
 )
 
 
+def source_from_text(value: object):
+    """Models often cite as text: ``"/a.csv:49"`` -> line 49, ``"/a.csv:R-7 (note)"`` -> record R-7."""
+    if not isinstance(value, str):
+        return value
+    path, _, rest = value.partition(":")
+    locator = rest.split(" (")[0].strip()
+    if not locator:
+        return {"path": path.strip()}
+    return {"path": path.strip(), "line": int(locator)} if locator.isdigit() else {"path": path, "record": locator}
+
+
 class SubmitArgs(Frozen):
     outcome: Outcome
     answer: JsonValue = None
-    sources: tuple[Source, ...] = ()
+    sources: tuple[Annotated[Source, BeforeValidator(source_from_text)], ...] = ()
     actions: tuple[Action, ...] = ()
 
 
@@ -177,6 +189,20 @@ def missing_locators(args: SubmitArgs):
     ]
 
 
+def salvage_submit(arguments: str):
+    """The last step's submit when it does not validate: keep outcome and answer, drop sources and actions."""
+    try:
+        raw = json.loads(arguments)
+    except ValueError:
+        return None
+    if not isinstance(raw, dict):
+        return None
+    try:
+        return parse_submit(json.dumps({"outcome": raw.get("outcome"), "answer": raw.get("answer")}))
+    except ValidationError:
+        return None
+
+
 def parse_submit(arguments: str):
     """``SubmitArgs`` from the model's arguments; an answer given as a JSON string becomes its value."""
     args = SubmitArgs.model_validate_json(arguments)
@@ -248,6 +274,7 @@ def loop(rec: Recorder, agent: Agent, task: Task):
             tools=(SUBMIT,) if last else TOOLS,
             max_tokens=MAX_TOKENS,
             reasoning_effort="none",
+            require_tool=last,
         )
         message = reply.choices[0].message
         messages.append(AssistantMessage(content=message.content, tool_calls=message.tool_calls))
@@ -277,6 +304,9 @@ def loop(rec: Recorder, agent: Agent, task: Task):
                 else:
                     output = f"error: no tool named {name}"
             except (ValidationError, ValueError, KeyError, TypeError) as e:
+                salvaged = salvage_submit(arguments) if last and name == "submit" else None
+                if salvaged is not None:
+                    return finish(task, salvaged, agent.files, agent.blobs, step)
                 output = f"error in the arguments of {name}: {e}"
             messages.append(ToolMessage(tool_call_id=call.id, content=output))
     return FALLBACK.model_copy(update={"steps": MAX_STEPS})
