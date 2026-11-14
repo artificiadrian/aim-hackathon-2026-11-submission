@@ -50,7 +50,7 @@ class RunArgs(FromText):
     only: TaskFilter = TaskFilter()
     parallel: int = Field(default=12, ge=1)
     collect: bool = False
-    max_usd: float = Field(default=1.5, gt=0)  # hard cap on model spend for the whole run (final budget: $3)
+    max_usd: float = Field(default=2.5, gt=0)  # hard cap on model spend for the whole run (final budget: $3)
 
 
 def run_deadline(started: float, run: Run):

@@ -46,7 +46,7 @@ def build_parser(default_kind: str | None):
     run = commands.add_parser("run", help="solve and submit tasks, then finish the run")
     run.add_argument("--kind", default=default_kind or "dev", help="dev or final (default: $ARENA_RUN_KIND, else dev)")
     run.add_argument("--parallel", type=int, default=12)
-    run.add_argument("--max-usd", type=float, default=1.5, help="hard spend cap for model calls (final budget: $3)")
+    run.add_argument("--max-usd", type=float, default=2.5, help="hard spend cap for model calls (final budget: $3)")
 
     evaluate = commands.add_parser("eval", help="offline: solve a saved dev run and grade it against its answers")
     evaluate.add_argument("run_dir", type=Path, help="a finished dev run in runs/ (with finish.json)")
