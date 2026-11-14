@@ -1,13 +1,11 @@
 """Read, cite and grep workspace files of any format (``formats``); results are ``models`` types."""
 
-import json
 import re
 import sys
 from collections import Counter
 from pathlib import Path
-from typing import cast
 
-from ws.formats import CACHE, read_text, units
+from ws.formats import CACHE, JSON, read_text, units
 from ws.models import Hit, Source, Unit
 
 SKIPPED = frozenset({"bin", "sbin", "lib", "lib32", "lib64", "libx32", "usr", "etc", "tmp", "proc", "dev"})
@@ -120,12 +118,12 @@ def json_keys(found: list[Unit]):
     objects = 0
     for unit in found:
         try:
-            value = cast("object", json.loads(unit.text))
+            value = JSON.validate_json(unit.text)
         except ValueError:
             continue
         if isinstance(value, dict):
             objects += 1
-            counts.update(str(k) for k in cast("dict[object, object]", value))
+            counts.update(value.keys())  # a dict would add its values as counts
     return ", ".join(k if n == objects else f"{k} ({n} of {objects})" for k, n in counts.items())
 
 

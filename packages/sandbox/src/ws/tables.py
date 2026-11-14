@@ -1,9 +1,6 @@
 """``table(path)``: any table file as one pandas DataFrame with a citation per row."""
 
-import json
-from typing import cast
-
-from ws.formats import units
+from ws.formats import JSON, units
 
 SOURCE_COLUMN = "_source"
 
@@ -24,12 +21,11 @@ def table(path: str, sheet: str | None = None):
             continue
         if not unit.cells:  # json, jsonl: one object per unit
             try:
-                value = cast("object", json.loads(unit.text))
+                value = JSON.validate_json(unit.text)
             except ValueError:
                 continue
             if isinstance(value, dict):
-                fields = cast("dict[object, object]", value)
-                rows.append({**{str(k): v for k, v in fields.items()}, SOURCE_COLUMN: where})
+                rows.append({**value, SOURCE_COLUMN: where})
             continue
         if where.sheet not in headers:
             if len([c for c in unit.cells if c.strip()]) >= 2:

@@ -8,9 +8,10 @@ import os
 from collections.abc import Callable, Iterable
 from typing import cast
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, JsonValue, ValidationError
 
 from ws.files import read, resolve
+from ws.formats import JSON
 from ws.models import Hit, Source
 
 
@@ -79,20 +80,19 @@ def as_source(value: object):
         return None
 
 
-def answer_values(answer: object) -> list[str]:  # recursive
+def answer_values(answer: JsonValue) -> list[str]:  # recursive
     """The atoms of an answer as text (strings of two or more characters, numbers), any case."""
     if isinstance(answer, dict):
-        return [v for item in parts(list(cast("dict[object, object]", answer).values())) for v in answer_values(item)]
-    if isinstance(answer, list | tuple):
-        items: list[object] = parts(cast("object", answer))
-        return [v for item in items for v in answer_values(item)]
+        return [v for item in answer.values() for v in answer_values(item)]
+    if isinstance(answer, list):
+        return [v for item in answer for v in answer_values(item)]
     if isinstance(answer, bool) or answer is None:
         return []
     text = str(answer).strip().casefold()
     return [text] if len(text) >= 2 else []
 
 
-def citation_notes(sources: list[Source], answer: object):
+def citation_notes(sources: list[Source], answer: JsonValue):
     """What is wrong with the citations, checked against the files: units that do not exist, and none of the cited
     units holding any value of the answer. Empty when all is fine."""
     notes: list[str] = []
@@ -115,9 +115,10 @@ def submit(outcome: str, answer: object = None, sources: object = (), actions: o
     harness as notes, which shows them once before it accepts."""
     if "SUBMIT_FD" not in os.environ:
         raise NoHarness
+    value = JSON.validate_json(json.dumps(answer, default=plain))  # any script value, parsed once into JSON
     cited, notes = as_sources(sources)
-    notes += citation_notes(cited, answer)
-    payload = {"outcome": outcome, "answer": answer, "sources": cited, "actions": actions, "notes": notes}
+    notes += citation_notes(cited, value)
+    payload = {"outcome": outcome, "answer": value, "sources": cited, "actions": actions, "notes": notes}
     line = json.dumps(payload, default=plain, ensure_ascii=False) + "\n"
     os.write(int(os.environ["SUBMIT_FD"]), line.encode("utf-8"))
     print("submit(...) received; the harness checks it when this script ends.")

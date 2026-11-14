@@ -3,7 +3,6 @@ accepts, and the helpers read every format. The chroot side is in tests/test_san
 
 import json
 from pathlib import Path
-from typing import cast
 
 import pandas as pd
 import pytest
@@ -150,4 +149,5 @@ def test_table_reads_any_table_under_its_real_header_with_a_citation_per_row(fil
 
 
 def cells(frame: pd.DataFrame, column: str):
-    return cast("list[object]", frame[column].tolist())
+    values: list[object] = list(frame[column])
+    return values

@@ -14,7 +14,9 @@ task families. The current build order and its progress are in
 2. **Type everything.** Every request, response, event, argument and answer is a frozen pydantic model; no raw
    dicts across function boundaries. Pydantic is for data only: objects with behavior or state (clients, trackers,
    locks, pools, sandboxes) are `@dataclass(frozen=True, slots=True)` (not frozen only when they count). No return
-   type hints, no `from __future__ import annotations`.
+   type hints, no `from __future__ import annotations`. Parse untyped input where it enters (JSON text with a
+   `TypeAdapter[JsonValue]` or a model, never `json.loads`), so no `cast` is needed after it; `cast` only at that
+   boundary, for library objects that have no typed form.
 3. **Record it all.** Every request, response, decision and failure is a typed event in `events.jsonl`, with as much
    context as it has (errors via `ErrorInfo.from_exception`). What goes to stdout also goes to the record.
 
