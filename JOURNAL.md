@@ -213,3 +213,13 @@ Format example (ignored: it sits in a code block). Write your entries below it, 
 - rejected: a code check of each answer against free-text claims (task knowledge); per-level step budgets and a
   first-message grep pass (open for the user)
 - evidence: host checks 91 passed; image tests 22 passed; no eval yet (batching fixes first)
+
+## 16:10 · table(), the task level and scanned tickets read up front; pandas-stubs
+
+- decided_by: both
+- why: L3 tasks join tables and the model guessed headers and lost row citations (audit B4); the platform gives a
+  level per task (docs/ARENA_DOCS.md); a scanned ticket can be the request itself and the model found that late
+  (review 131442Z); pandas had its type checks switched off for want of stubs
+- rejected: a first-message grep of ids from the instruction (needs a guess of what an id looks like); a time-zone
+  column in table() (the zone comes from the workspace, the model converts)
+- evidence: host 92 passed, image 22 passed; reviews 20261114T132912Z-eval and 20261114T133127Z

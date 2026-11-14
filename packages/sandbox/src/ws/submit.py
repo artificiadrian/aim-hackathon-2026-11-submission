@@ -57,8 +57,13 @@ def as_sources(value: object):
 
 
 def parts(value: object) -> list[object]:  # a script passes any value
-    """A list or tuple as its items, anything else as a list of one."""
-    return list(cast("Iterable[object]", value)) if isinstance(value, list | tuple) else [value]
+    """A list, tuple, set or pandas/numpy sequence (``df["_source"]``) as its items, anything else as a list of
+    one."""
+    if isinstance(value, list | tuple | set | frozenset):
+        return list(cast("Iterable[object]", value))
+    if type(value).__module__.split(".")[0] in {"numpy", "pandas"} and isinstance(value, Iterable):
+        return list(value)
+    return [value]
 
 
 def as_source(value: object):

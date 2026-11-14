@@ -3,12 +3,15 @@ accepts, and the helpers read every format. The chroot side is in tests/test_san
 
 import json
 from pathlib import Path
+from typing import cast
 
+import pandas as pd
 import pytest
 import ws.formats
 from ws.files import cite, columns, grep, read, resolve
 from ws.models import Source as WsSource
 from ws.submit import as_sources, citation_notes, plain
+from ws.tables import table
 
 from mcnulty.clients.arena import Source
 
@@ -121,7 +124,6 @@ def test_cite_prefers_whole_words(files: Path):
 def test_submit_takes_pandas_and_numpy_values():
     """Audit D: a Series, an Index or pd.NA in submit(...) raised NotJson and the task lost its answer."""
     import numpy as np
-    import pandas as pd  # pyright: ignore[reportMissingTypeStubs] - no stubs in the dev venv
 
     answer = {"s": pd.Series(["a", "b"]), "i": pd.Index([1, 2]), "na": pd.NA, "n": np.int64(3), "a": np.array([1.5])}
     assert json.loads(json.dumps(answer, default=plain)) == {
@@ -131,3 +133,21 @@ def test_submit_takes_pandas_and_numpy_values():
         "n": 3,
         "a": [1.5],
     }
+
+
+def test_table_reads_any_table_under_its_real_header_with_a_citation_per_row(files: Path):
+    """Audit B4: L3 tasks join tables; the model guessed headers and lost row citations."""
+    (files / "h.csv").write_text("Report of the night\nid,count,who\nA-1,3,x\nA-2,,y\n", encoding="utf-8")
+    frame = table(str(files / "h.csv"))
+    assert list(frame.columns) == ["id", "count", "who", "_source"]
+    assert cells(frame, "count")[0] == 3
+    assert cells(frame, "who") == ["x", "y"]
+    cited, notes = as_sources(frame.loc[frame["who"] == "y", "_source"])
+    assert ([str(s) for s in cited], notes) == ([f"{files / 'h.csv'}#record=A-2"], [])
+    jsonl = table(str(files / "a.jsonl"))
+    assert cells(jsonl, "agent") == ["", "devops-07"]
+    assert [str(s) for s in cells(jsonl, "_source")] == [f"{files / 'a.jsonl'}#line=1", f"{files / 'a.jsonl'}#line=2"]
+
+
+def cells(frame: pd.DataFrame, column: str):
+    return cast("list[object]", frame[column].tolist())

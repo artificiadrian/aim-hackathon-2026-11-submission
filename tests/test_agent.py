@@ -177,7 +177,9 @@ def test_a_closed_ticket_is_history_and_the_open_one_the_request():
     assert closed("---\nticket: IR-1\nstatus: closed\n---\nRotate TOK-1.")
     assert not closed("---\nticket: IR-2\nstatus: open\n---\nList the ids.")
     assert not closed("A ticket without front matter.")
-    message = first_message("Work the open ticket.", {"/tickets/IR-2.md": "open one"}, {"/tickets/IR-1.md": "old"}, {})
+    message = first_message(
+        "Work the open ticket.", None, {"/tickets/IR-2.md": "open one"}, {"/tickets/IR-1.md": "old"}, {}
+    )
     assert "/tickets/IR-1.md (closed ticket: history, not a request)" in message
 
 
@@ -191,8 +193,9 @@ def test_nested_source_lists_are_flattened():
 
 
 def test_the_first_message_carries_the_table_columns():
-    message = first_message("List the ids.", {}, {}, {"/a.csv": 10}, "/a.csv line=1| id | actor")
+    message = first_message("List the ids.", 3, {}, {}, {"/a.csv": 10}, "/a.csv line=1| id | actor")
     assert message.endswith("table file and sheet) =====\n/a.csv line=1| id | actor")
+    assert "Task level: 3 of 3 (hard)." in message
 
 
 def test_a_scanned_ticket_is_never_inlined_as_text(tmp_path: Path):
@@ -206,6 +209,8 @@ def test_a_scanned_ticket_is_never_inlined_as_text(tmp_path: Path):
     loaded = TaskFiles.load(files, blobs)
     assert loaded.trusted["/tickets/IR-1.jpg"] == NOT_TEXT
     assert loaded.trusted["/tickets/IR-2.md"].endswith("List the ids.")
+    read = TaskFiles.load(files, blobs, {"/tickets/IR-1.jpg": "ticket: IR-1\nstatus: closed\nRotate TOK-1."})
+    assert read.history["/tickets/IR-1.jpg"].endswith("Rotate TOK-1.")  # a transcript's status decides, like text
 
 
 def test_a_blocked_action_is_told_to_the_model():

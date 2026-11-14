@@ -27,6 +27,9 @@ Helpers in every script, without an import. They read every format (pdf, docx, o
 jsonl, text); open() and pandas text matching do not see inside pdf, docx or spreadsheets:
 - grep(pattern, *paths, regex=False): every unit that matches, in the given files and folders (default: the whole \
 workspace), each printed as "/path#line=17| text"; a hit is a ready citation.
+- table(path, sheet=None): a table file (csv, jsonl, json, xlsx, ods) as a pandas DataFrame under its real header, \
+numbers as numbers, with each row's citation in the column "_source" (sources=list(df.loc[mask, "_source"])). Use \
+it for every table, also to join two tables.
 - text(path, limit=200): a file as numbered units with locators ("sheet=alerts row=58| ...", "paragraph=4| ...", \
 "page=2| ...", "line=17| ...").
 - cite(path, value, column=None): the citations of the units that hold value (column: match only that column).
@@ -101,12 +104,22 @@ def file_tree(sizes: dict[str, int]):
     return "\n".join(lines)
 
 
+LEVELS = {1: "straightforward", 2: "more hops and traps", 3: "hard"}  # docs/ARENA_DOCS.md
+
+
 def first_message(
-    instruction: str, trusted: dict[str, str], history: dict[str, str], sizes: dict[str, int], tables: str = ""
+    instruction: str,
+    level: int | None,
+    trusted: dict[str, str],
+    history: dict[str, str],
+    sizes: dict[str, int],
+    tables: str = "",
 ):
-    """The task, the trusted texts (path -> text) in full, closed tickets marked as history, the file tree, and the
-    header of every table file (``columns()`` in the sandbox)."""
+    """The task and its level, the trusted texts (path -> text) in full, closed tickets marked as history, the file
+    tree, and the header of every table file (``columns()`` in the sandbox)."""
     parts = [f"Task instruction (from the incident commander):\n{instruction}"]
+    if level in LEVELS:
+        parts.append(f"Task level: {level} of 3 ({LEVELS[level]}).")
     parts += [f"===== {path} =====\n{text.rstrip()}" for path, text in trusted.items()]
     closed = "closed ticket: history, not a request"
     parts += [f"===== {path} ({closed}) =====\n{text.rstrip()}" for path, text in history.items()]

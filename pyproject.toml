@@ -16,6 +16,7 @@ mcnulty = "mcnulty.cli:main"
 dev = [
     "basedpyright>=1.40.2",
     "mcnulty-sandbox",
+    "pandas-stubs>=3.1.0.261029",
     "pypdf>=7.1.0",
     "pytest>=9.2.0",
     "ruff>=0.17.5",
