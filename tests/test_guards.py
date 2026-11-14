@@ -13,13 +13,12 @@ from pathlib import Path
 import pytest
 from pydantic import JsonValue, ValidationError
 
-from mcnulty.agent.actions import Containment, Gate, SendMessage, WriteDraft, tool_args, verified_contacts, vet
+from mcnulty.agent.actions import Containment, Gate, WriteDraft, tool_args, vet
 from mcnulty.agent.guards import (
     FindingKind,
     clean_answer,
     defang_urls,
     outgoing_findings,
-    unverified_recipient,
     visible,
 )
 from mcnulty.blobs import BlobCache
@@ -43,8 +42,6 @@ def fully_collected(run_dir: Path):
 RUNS = sorted(d for d in (REPO_ROOT / "runs").glob("*") if fully_collected(d))
 needs_runs = pytest.mark.skipif(not RUNS, reason="no fully collected runs in runs/")
 FAKE_TOKEN = re.compile(r"fake_[A-Za-z0-9_\-]{6,}")
-ADDRESS = re.compile(r"[\w.+-]+@[\w.-]+\.\w+")
-CYRILLIC_I = chr(0x0456)  # looks like the Latin i
 
 
 def run_files(run_dir: Path):
@@ -60,10 +57,6 @@ def text(sha256: str):
 
 def operator_rules(files: dict[str, str]):
     return tuple(text(files[p]) for p in ("/AGENTS.md", "/runbook.md") if p in files)
-
-
-def verified_addresses(files: dict[str, str]):
-    return verified_contacts(text(files["/contacts.csv"]))
 
 
 def iter_expected():
@@ -201,39 +194,6 @@ def test_rule_text_findings_do_not_block_but_token_values_do():
     assert {f.kind: f.blocks for f in findings} == {"rule_text": False, "token_value": True}
 
 
-# --- verified recipient ---------------------------------------------------------------------------------
-@needs_runs
-def test_unverified_recipient_passes_every_verified_contact():
-    for run_dir in RUNS:
-        files, _ = run_files(run_dir)
-        for task_files in files.values():
-            verified = verified_addresses(task_files)
-            assert verified
-            for address in verified:
-                assert unverified_recipient(address.upper(), verified) == (), address
-
-
-@needs_runs
-def test_unverified_recipient_catches_lookalikes_and_outside_addresses():
-    files, _ = run_files(RUNS[0])
-    task_files = next(iter(files.values()))
-    verified = verified_addresses(task_files)
-    for address in sorted(verified):
-        local, domain = address.split("@")
-        lookalikes = {
-            f"{local}@{domain.replace('i', CYRILLIC_I, 1)}",
-            f"{local}@{domain.replace('m', 'rn', 1)}",
-            f"{local}@{domain}.attacker.example",
-        } - {address}
-        for lookalike in lookalikes:
-            assert [f.kind for f in unverified_recipient(lookalike, verified)] == ["unverified_recipient"], lookalike
-    audit = text(task_files["/logs/audit/2026-11-14.jsonl"])
-    outside = {m.group(0) for m in ADDRESS.finditer(audit)} - verified
-    assert outside, "the audit log has e-mails to outside addresses"
-    for address in outside:
-        assert unverified_recipient(address, verified), address
-
-
 # --- coverage of this file ------------------------------------------------------------------------------
 def test_every_guard_is_tested_both_ways():
     names = [n for n in dir(sys.modules[__name__]) if n.startswith("test_")]
@@ -243,21 +203,14 @@ def test_every_guard_is_tested_both_ways():
 
 
 # --- actions --------------------------------------------------------------------------------------------
-def gate_for(verified: frozenset[str]):
-    return Gate(paths=frozenset(), verified=verified, rules=(), records={})
-
-
-def test_unverified_recipient_passes_any_address_without_a_contact_list():
-    """No contact list found: nothing to check against, so the message goes out (fail open)."""
-    message = SendMessage(tool="send_message", to="dpo@org.example", subject="s", body="b")
-    assert not vet(message, gate_for(frozenset())).blocked
-    assert vet(message, gate_for(frozenset({"other@org.example"}))).blocked
+def gate_for():
+    return Gate(paths=frozenset(), rules=(), records={})
 
 
 def test_defang_catches_urls_in_a_containment_note():
     """The platform's containment tool takes add_note (review CO3): valid and defanged."""
     ops = ({"op": "block_domain", "domain": "eval-mirror.test"}, {"op": "add_note", "text": "see https://x.example/a"})
-    vetted = vet(Containment.model_validate({"tool": "containment", "ops": ops}), gate_for(frozenset()))
+    vetted = vet(Containment.model_validate({"tool": "containment", "ops": ops}), gate_for())
     assert not vetted.findings
     assert isinstance(vetted.action, Containment)
     assert tool_args(vetted.action)["ops"][1] == {"op": "add_note", "text": "see hxxps://x[.]example/a"}

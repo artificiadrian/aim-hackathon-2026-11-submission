@@ -10,11 +10,13 @@ import base64
 import math
 import re
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 
 from pydantic import ValidationError
 
-from mcnulty.agent.actions import Gate, verified_contacts
+from mcnulty.agent.actions import Gate
 from mcnulty.agent.citations import line_records
 from mcnulty.agent.guards import visible
 from mcnulty.agent.prompt import (
@@ -69,10 +71,10 @@ SUBMIT_SOON_LEFT = 2  # steps left when the model is told to submit next
 MAX_TOKENS = 3000  # per model reply
 LAST_CALL_LEFT = 240.0  # seconds before the deadline: the next call is the submit-only last step
 CALL_RESERVE = 60.0  # seconds before the deadline at which a model call stops waiting or retrying
-OPERATOR_FILES = ("/AGENTS.md", "/runbook.md")
+SOURCE_OF_TRUTH = "/AGENTS.md"  # docs/ARENA_DOCS.md: it names the other operator files
 STATUS = re.compile(r"(?mi)^status:\s*(\S+)")  # a ticket's front matter (docs/ARENA_DOCS.md, ticket tasks)
 INLINE_MAX = 20_000  # characters of one operator file or ticket in the first message
-NOT_TEXT = "[not a text file (e.g. a scanned ticket): read it with view_image; it may be the request itself]"
+NOT_TEXT = "[not a plain text file: read it with text(path) in a script, or with view_image if it is an image]"
 IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
 SCANS_MAX = 6  # scanned tickets transcribed before the first call; more stay notes for view_image
 TRANSCRIBE = (
@@ -87,12 +89,30 @@ def image_url(data: bytes, path: str):
     return f"data:{kind};base64,{base64.b64encode(data).decode()}" if kind else None
 
 
-def transcribe_scans(rec: Recorder, llm: OpenRouterClient, files: dict[str, str], blobs: BlobCache):
-    """The text of scanned tickets (images under /tickets/), read once with the vision model before the loop: the
-    request itself may be a scan, and its status says whether it is history. A failed read leaves the note."""
+def named(text: str, paths: Iterable[str]):
+    """The paths that ``text`` names exactly (``/a/b.md``, or a folder as ``/a/`` or ``/a``), in order."""
+    return [p for p in paths if re.search(re.escape(p.rstrip("/")) + r"(?![\w-]|\.\w)", text)]  # "a.md." ends
+
+
+def queue_folders(instruction: str, files: dict[str, str]):
+    """The folders the instruction names (e.g. the ticket queue): their files are the request or its history."""
+    folders = {str(PurePosixPath(p).parent) for p in files} - {"/"}
+    return frozenset(named(instruction, sorted(folders)))
+
+
+def in_folders(path: str, folders: frozenset[str]):
+    return str(PurePosixPath(path).parent) in folders
+
+
+def transcribe_scans(
+    rec: Recorder, llm: OpenRouterClient, files: dict[str, str], blobs: BlobCache, folders: frozenset[str]
+):
+    """The text of scanned documents in the folders the instruction names (``queue_folders``), read once with the
+    vision model before the loop: the request itself may be a scan, and its status says whether it is history. A
+    failed read leaves the note."""
     scans: dict[str, str] = {}
     for path in sorted(files):
-        data = blobs.get(files[path]) if path.startswith("/tickets/") else None
+        data = blobs.get(files[path]) if in_folders(path, folders) else None
         url = image_url(data, path) if data is not None else None
         if url is None or len(scans) >= SCANS_MAX:
             continue
@@ -129,13 +149,21 @@ class TaskFiles(Frozen):
     sizes: dict[str, int]
     trusted: dict[str, str]  # operator files and open tickets: path -> text
     history: dict[str, str]  # tickets with another status: history, not a request (platform docs)
-    contacts: str  # /contacts.csv, empty when missing
+    operator: tuple[str, ...]  # /AGENTS.md and the workspace files it names
     records: dict[str, dict[int, str]]  # csv path -> line -> record id (``citations.line_records``)
 
     @classmethod
-    def load(cls, files: dict[str, str], blobs: BlobCache, scans: dict[str, str] | None = None):
-        """``scans``: transcripts of scanned tickets (``transcribe_scans``), inlined in place of the image."""
+    def load(
+        cls,
+        files: dict[str, str],
+        blobs: BlobCache,
+        folders: frozenset[str] | None = None,
+        scans: dict[str, str] | None = None,
+    ):
+        """``folders``: the folders the instruction names (``queue_folders``): their files with a status are tickets.
+        ``scans``: transcripts of scanned documents (``transcribe_scans``), inlined in place of the image."""
         transcripts = scans or {}
+        queues = folders or frozenset()
 
         def text(path: str):
             """The file as text; a note instead when it is not text (a scanned ticket) or too long to inline."""
@@ -153,20 +181,24 @@ class TaskFiles(Frozen):
                 return decoded[:INLINE_MAX] + note
             return decoded
 
-        tickets = {p: text(p) for p in sorted(files) if p.startswith("/tickets/")}
-        operator = {p: text(p) for p in OPERATOR_FILES if p in files}
+        root = text(SOURCE_OF_TRUTH) if SOURCE_OF_TRUTH in files else ""
+        names = [SOURCE_OF_TRUTH] if root else []
+        names += [p for p in named(root, sorted(files)) if p != SOURCE_OF_TRUTH]
+        operator = {p: text(p) for p in names}
+        queued = {p: text(p) for p in sorted(files) if in_folders(p, queues) and p not in operator}
+        tickets = {p: t for p, t in queued.items() if STATUS.search(t) or p in transcripts}
         return cls(
             paths=files,
             sizes={p: len(blobs.get(sha) or b"") for p, sha in files.items()},
             trusted=operator | {p: t for p, t in tickets.items() if not closed(t)},
             history={p: t for p, t in tickets.items() if closed(t)},
-            contacts=text("/contacts.csv"),
+            operator=tuple(names),
             records={p: line_records(text(p)) for p in files if p.endswith(".csv")},
         )
 
     @property
     def rules(self):
-        return tuple(self.trusted[p] for p in OPERATOR_FILES if p in self.trusted)
+        return tuple(self.trusted[p] for p in self.operator)
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,7 +251,8 @@ def solve(
     pool: SandboxPool,
     deadline: Deadline = NO_DEADLINE,
 ):
-    task_files = TaskFiles.load(files, blobs, transcribe_scans(rec, llm, files, blobs))
+    folders = queue_folders(task.instruction, files)
+    task_files = TaskFiles.load(files, blobs, folders, transcribe_scans(rec, llm, files, blobs, folders))
     box = TaskSandbox.create(rec, pool, task.task_id, files, blobs)
     try:
         result = loop(rec, Tools(llm=llm, box=box, files=task_files, blobs=blobs), task, deadline)
@@ -233,7 +266,6 @@ def loop(rec: Recorder, tools: Tools, task: Task, deadline: Deadline) -> Solutio
     files = tools.files
     gate = Gate(
         paths=frozenset(files.paths),
-        verified=verified_contacts(files.contacts),
         rules=files.rules,
         records=files.records,
     )
@@ -262,7 +294,7 @@ def loop(rec: Recorder, tools: Tools, task: Task, deadline: Deadline) -> Solutio
             reply = tools.llm.chat(
                 rec,
                 shorten_old_outputs(tuple(messages)),
-                tools=(SUBMIT,) if step > budget else (RUN_PYTHON,) if last else TOOLS,
+                tools=(RUN_PYTHON, SUBMIT) if step > budget else (RUN_PYTHON,) if last else TOOLS,
                 max_tokens=MAX_TOKENS,
                 reasoning_effort="none",
                 require_tool=last,

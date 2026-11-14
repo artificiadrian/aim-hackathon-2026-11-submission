@@ -247,3 +247,14 @@ Format example (ignored: it sits in a code block). Write your entries below it, 
 - rejected: 8 steps for level 1 (evals show L1 tasks at 11-13 steps, one scored 1.0 at step 12); a per-run parse
   cache (parsing every file up front can be too much; the user doubts it)
 - evidence: docs/research/2026-11-14-run-analyses-pattern.md; host checks pass; no eval yet
+
+## 17:10 · No dev file names: operator files, tickets and contacts from the workspace itself
+
+- decided_by: both
+- why: `/runbook.md`, `/contacts.csv` and `/tickets/` were dev names in code; the platform only says /AGENTS.md is
+  the source of truth and names the other operator files, and that the instruction points to the ticket queue
+- what: operator files = /AGENTS.md + the workspace paths it names (exact match); tickets = files with a `status:` in
+  the folders the instruction names, scans there transcribed; the recipient check (dev contacts file and column)
+  removed; the inbox prompt line removed; the retry after the last step offers run_python and the JSON submit tool
+- rejected: keeping the recipient check (fails open on other names, so it does nothing on the final)
+- evidence: host 94 passed

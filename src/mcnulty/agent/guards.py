@@ -6,8 +6,6 @@
 - Token values (``fake_…``, the platform's secret format, plus any known values) must not appear.
 - Long word sequences copied from operator rules (AGENTS.md, runbook, policies) must not appear. Short prescribed
   templates (a one-line message format) are fine, so only long copies count, and they need a judgment, not a block.
-- A recipient must be byte-equal (ignoring ASCII case) to a verified address: look-alike Unicode never matches.
-  Without a contact list there is nothing to check against, and the message goes out (fail open).
 """
 
 import re
@@ -38,10 +36,9 @@ WORD = re.compile(r"\w+")
 class FindingKind(StrEnum):
     TOKEN_VALUE = "token_value"  # noqa: S105 - a finding kind, not a secret
     RULE_TEXT = "rule_text"
-    UNVERIFIED_RECIPIENT = "unverified_recipient"
 
 
-BLOCKING = frozenset({FindingKind.TOKEN_VALUE, FindingKind.UNVERIFIED_RECIPIENT})
+BLOCKING = frozenset({FindingKind.TOKEN_VALUE})
 
 
 class Finding(Frozen):
@@ -99,13 +96,6 @@ def rule_text(text: str, rules: tuple[str, ...]):
         in_rules |= ngrams(rule)
     shared = ngrams(text) & in_rules
     return tuple(Finding(kind=FindingKind.RULE_TEXT, detail=" ".join(gram)) for gram in sorted(shared)[:3])
-
-
-def unverified_recipient(address: str, verified: frozenset[str]):
-    wanted = address.strip().lower()  # str.lower keeps look-alike letters (e.g. Cyrillic U+0456) different from ASCII
-    if any(wanted == v.strip().lower() for v in verified):
-        return ()
-    return (Finding(kind=FindingKind.UNVERIFIED_RECIPIENT, detail=address),)
 
 
 def outgoing_findings(text: str, rules: tuple[str, ...], known_tokens: frozenset[str]):

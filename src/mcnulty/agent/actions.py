@@ -2,9 +2,6 @@
 performs them (after the loop, through the Task API). The model never acts directly.
 """
 
-import csv
-import io
-import re
 from pathlib import PurePosixPath
 from typing import Annotated, Literal
 
@@ -14,12 +11,8 @@ from mcnulty.agent.guards import (
     Finding,
     defang_urls,
     outgoing_findings,
-    unverified_recipient,
 )
 from mcnulty.frozen import Frozen, ModelInput
-
-ADDRESS = re.compile(r"[^\s,;<>\"']+@[^\s,;<>\"']+\.[^\s,;<>\"']+")
-YES = frozenset({"yes", "true", "1", "y", "verified"})
 
 
 class QuarantineAgent(ModelInput):
@@ -91,7 +84,6 @@ class Gate(Frozen):
     """What everything leaving the harness is checked against and fixed with, for one task."""
 
     paths: frozenset[str]  # workspace files: the only valid source paths
-    verified: frozenset[str]  # recipient addresses
     rules: tuple[str, ...]  # operator texts that must not be copied out
     records: dict[str, dict[int, str]]  # csv path -> physical line -> record id, for files with a unique first column
 
@@ -112,31 +104,14 @@ def tool_args(action: Action):
     return action.model_dump(mode="json", exclude={"tool"}, exclude_none=True)
 
 
-def verified_contacts(contacts_csv: str):
-    """Addresses in rows of the contacts list whose 'verified' column says yes."""
-    rows = list(csv.reader(io.StringIO(contacts_csv)))
-    if not rows:
-        return frozenset[str]()
-    header = [h.strip().lower() for h in rows[0]]
-    columns = [i for i, h in enumerate(header) if "verified" in h]
-    return frozenset(
-        address
-        for row in rows[1:]
-        if any(i < len(row) and row[i].strip().lower() in YES for i in columns)
-        for address in (m.group(0) for m in ADDRESS.finditer(",".join(row)))
-    )
-
-
 def vet(action: Action, gate: Gate):
-    """Defang outgoing text and check it: recipient verified (when there is a contact list), no token values, no long
-    copies of the rules."""
+    """Defang outgoing text and check it: no token values, no long copies of the rules."""
     match action:
         case SendMessage():
             defanged = {"subject": defang_urls(action.subject), "body": defang_urls(action.body)}
             action = action.model_copy(update=defanged)
             text = f"{action.subject}\n{action.body}"
-            recipient = unverified_recipient(action.to, gate.verified) if gate.verified else ()
-            findings = recipient + outgoing_findings(text, gate.rules, frozenset())
+            findings = outgoing_findings(text, gate.rules, frozenset())
         case WriteDraft():
             action = action.model_copy(update={"content": defang_urls(action.content)})
             findings = outgoing_findings(action.content, gate.rules, frozenset())

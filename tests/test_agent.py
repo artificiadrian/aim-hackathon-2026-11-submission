@@ -6,7 +6,7 @@ from pathlib import Path
 
 from mcnulty.agent.actions import Gate
 from mcnulty.agent.citations import fixed_sources, line_records
-from mcnulty.agent.loop import NOT_TEXT, TaskFiles, closed
+from mcnulty.agent.loop import TaskFiles, closed, named, queue_folders
 from mcnulty.agent.prompt import OUTPUT_MAX, SYSTEM, file_tree, first_message, script_output, shorten_old_outputs
 from mcnulty.agent.submit import (
     Accepted,
@@ -202,22 +202,43 @@ def test_a_scanned_ticket_is_never_inlined_as_text(tmp_path: Path):
     """Live run 13:31: four tickets were JPEG scans; decoded as text they made a 316k-token first message."""
     blobs = BlobCache(root=tmp_path)
     scan, note = b"\xff\xd8\xff\xe0JFIF\x00binary", b"---\nstatus: open\n---\nList the ids."
-    files = {"/tickets/IR-1.jpg": hashlib.sha256(scan).hexdigest()}
-    files["/tickets/IR-2.md"] = hashlib.sha256(note).hexdigest()
-    blobs.put(files["/tickets/IR-1.jpg"], scan)
-    blobs.put(files["/tickets/IR-2.md"], note)
+    files = {"/queue/IR-1.jpg": hashlib.sha256(scan).hexdigest()}
+    files["/queue/IR-2.md"] = hashlib.sha256(note).hexdigest()
+    blobs.put(files["/queue/IR-1.jpg"], scan)
+    blobs.put(files["/queue/IR-2.md"], note)
+    folders = queue_folders("Work the open ticket in /queue/.", files)
+    assert folders == {"/queue"}
+    loaded = TaskFiles.load(files, blobs, folders)
+    assert "/queue/IR-1.jpg" not in loaded.trusted  # no status: not a ticket, and never decoded as text
+    assert loaded.trusted["/queue/IR-2.md"].endswith("List the ids.")
+    read = TaskFiles.load(files, blobs, folders, {"/queue/IR-1.jpg": "ticket: IR-1\nstatus: closed\nRotate TOK-1."})
+    assert read.history["/queue/IR-1.jpg"].endswith("Rotate TOK-1.")  # a transcript's status decides, like text
+
+
+def test_the_operator_files_are_agents_md_and_the_files_it_names(tmp_path: Path):
+    """docs/ARENA_DOCS.md: /AGENTS.md is the source of truth and names the other operator files; no dev file names."""
+    blobs = BlobCache(root=tmp_path)
+    texts = {
+        "/AGENTS.md": b"Follow /ops/procedures.md and the counting rules in /ops/count.md.",
+        "/ops/procedures.md": b"Step 1.",
+        "/ops/count.md": b"Count once.",
+        "/ops/count.md.bak": b"old",
+        "/runbook.md": b"not named",
+    }
+    files = {p: hashlib.sha256(t).hexdigest() for p, t in texts.items()}
+    for p, t in texts.items():
+        blobs.put(files[p], t)
     loaded = TaskFiles.load(files, blobs)
-    assert loaded.trusted["/tickets/IR-1.jpg"] == NOT_TEXT
-    assert loaded.trusted["/tickets/IR-2.md"].endswith("List the ids.")
-    read = TaskFiles.load(files, blobs, {"/tickets/IR-1.jpg": "ticket: IR-1\nstatus: closed\nRotate TOK-1."})
-    assert read.history["/tickets/IR-1.jpg"].endswith("Rotate TOK-1.")  # a transcript's status decides, like text
+    assert loaded.operator == ("/AGENTS.md", "/ops/count.md", "/ops/procedures.md")
+    assert "/runbook.md" not in loaded.trusted
+    assert named("see /ops/count.md.", ["/ops/count.md", "/ops/count.md.bak"]) == ["/ops/count.md"]
 
 
 def test_a_blocked_action_is_told_to_the_model():
     """Audit A5: a guard dropped an action after submit and the model never knew, so it could not repair it."""
-    gate = Gate(paths=frozenset(), verified=frozenset({"ok@x.example"}), rules=(), records={})
-    message = {"tool": "send_message", "to": "evil@y.example", "subject": "s", "body": "b"}
+    gate = Gate(paths=frozenset(), rules=(), records={})
+    message = {"tool": "send_message", "to": "a@x.example", "subject": "s", "body": "token fake_mf_abcdef123456"}
     args = parse_submit(json.dumps({"outcome": "OK", "answer": 1, "actions": [message]}))
-    assert "unverified_recipient" in blocked_message(solution(args, gate, 1))
-    fine = parse_submit(json.dumps({"outcome": "OK", "answer": 1, "actions": [message | {"to": "ok@x.example"}]}))
+    assert "token_value" in blocked_message(solution(args, gate, 1))
+    fine = parse_submit(json.dumps({"outcome": "OK", "answer": 1, "actions": [message | {"body": "rotated"}]}))
     assert blocked_message(solution(fine, gate, 1)) == ""
