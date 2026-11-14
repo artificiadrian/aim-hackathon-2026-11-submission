@@ -14,7 +14,7 @@ keys, resource limits and a wall-clock timeout. One uid per task: a task cannot 
 every process it leaves behind is killed after the run. At most ``SCRIPTS_AT_ONCE`` scripts run at the same time
 (2 CPUs); a script that waits too long does not start and says so. Workspace files and the system are root-owned and
 read-only; ``/tmp`` is the writable scratch folder, kept between the runs of a task and emptied above ``TMP_MAX``.
-``sitecustomize.py`` in the image blocks the network.
+``ws.run`` blocks the network in Python.
 
 Output: stdout, stderr and ``submit(...)`` calls go to three anonymous files of the harness, never pipes. The file
 size limit stops a print flood at ``FSIZE``, the harness reads only head and tail, and a child that leaves the process
@@ -37,7 +37,7 @@ from mcnulty.blobs import BlobCache
 from mcnulty.record.events import FileSkipped, SandboxRan, Stream
 from mcnulty.record.log import Recorder
 
-SITECUSTOMIZE = Path("/usr/local/lib/python3.12/site-packages/sitecustomize.py")  # only in the Docker image
+RUNNER = Path("/usr/local/lib/python3.12/site-packages/ws/run.py")  # packages/sandbox, only in the Docker image
 BASE = Path("/sandbox/base")
 COPIED = ("bin", "sbin", "lib", "lib32", "lib64", "libx32", "usr", "etc")  # those the root has; links stay links
 NOT_IN_SANDBOX = ("usr/local/bin/uv",)
@@ -102,7 +102,7 @@ def ensure_base(pool: SandboxPool):
     with pool.base_lock:
         if BASE.exists():
             return
-        if not SITECUSTOMIZE.exists():
+        if not RUNNER.exists():
             raise SandboxUnavailable
         partial = BASE.with_name("base.partial")
         shutil.rmtree(partial, ignore_errors=True)
@@ -135,7 +135,7 @@ def read_stream(file: BinaryIO):
 
 
 def last_submission(file: BinaryIO):
-    """The JSON of the last ``submit(...)`` call: one line per call (``packages/sandbox/sitecustomize.py``)."""
+    """The JSON of the last ``submit(...)`` call: one line per call (``packages/sandbox``: ``ws.submit``)."""
     file.seek(0)
     calls = file.read().decode("utf-8", errors="replace").splitlines()
     return calls[-1] if calls else None
@@ -228,7 +228,8 @@ class TaskSandbox:
             str(self.root),
             "/usr/local/bin/python3",
             "-I",
-            "-",
+            "-m",
+            "ws.run",  # the code comes on stdin; ws.run blocks the network and adds the helpers
         ]
         t0 = time.time()
         with (

@@ -13,11 +13,11 @@ from pathlib import Path
 
 import pytest
 
-from mcnulty.agent.sandbox import FSIZE, RECORD_MAX, SITECUSTOMIZE, SandboxPool, TaskSandbox, self_test
+from mcnulty.agent.sandbox import FSIZE, RECORD_MAX, RUNNER, SandboxPool, TaskSandbox, self_test
 from mcnulty.blobs import BlobCache
 from mcnulty.record.log import EventLog, Recorder
 
-pytestmark = pytest.mark.skipif(not SITECUSTOMIZE.exists(), reason="the sandbox runs only inside the Docker image")
+pytestmark = pytest.mark.skipif(not RUNNER.exists(), reason="the sandbox runs only inside the Docker image")
 POOL = SandboxPool()
 CSV = b"id,actor,records\nR-1,ext,5\nR-2,int,7\n"
 
@@ -75,7 +75,7 @@ def test_passes_scratch_kept_between_runs(box: TaskSandbox, rec: Recorder):
         "open('/logs/new.txt', 'w').write('x')",  # add a file to the workspace
         "import os; os.remove('/logs/access/requests.csv')",
         "open('/usr/local/lib/python3.12/site-packages/evil.py', 'w').write('x')",  # change its own environment
-        "open('/usr/local/lib/python3.12/site-packages/sitecustomize.py', 'w').write('x')",
+        "open('/usr/local/lib/python3.12/site-packages/ws/run.py', 'w').write('x')",
     ],
 )
 def test_catches_writes_outside_scratch(box: TaskSandbox, rec: Recorder, code: str):
@@ -118,10 +118,11 @@ def test_catches_runaway_code(box: TaskSandbox, rec: Recorder):
 
 
 def test_passes_the_harness_keeps_its_network():
-    """The network block is in the system Python only; the harness's venv does not load it."""
+    """The network block is installed only by ws.run inside the sandbox, never in the harness's process."""
     import sys
 
-    assert "sitecustomize" not in sys.modules
+    assert "ws.run" not in sys.modules
+    assert "ws.network" not in sys.modules
 
 
 def test_catches_workspace_paths_that_leave_the_task_root(tmp_path: Path):

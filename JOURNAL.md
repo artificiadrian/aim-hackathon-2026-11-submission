@@ -189,3 +189,16 @@ Format example (ignored: it sits in a code block). Write your entries below it, 
   dev data. A ticket without a status stays a request
 - evidence: docs/ARENA_DOCS.md lines 82-84
 
+## 14:30 · Eval with all fixes: two bugs found, both fixed
+
+- decided_by: both
+- evidence: runs/20261114T125844Z-eval and the t19 run after it (real calls): 11 tasks, mean score 0.589,
+  $0.0120 per task (before: 6/11 right, $0.0114). Answers right in 9 of 11; t14 wrong, t09 no submission
+- bug 1: models write sources=[cite(...)] and cite returns a list; the nested list failed validation and every
+  source was dropped. Fix: model input flattens nested lists one level. Offline on the same submissions: mean
+  0.589 -> 0.743 (t01, t10 1/1; t05 4/6; t23 4/4; t31 4/5; t40, t19 2/3)
+- bug 2: t09's last script called cite(jsonl, value, column="ts"); cite raised for the missing column and the
+  submit(...) in the same call never ran. Fix: cite never raises; it matches anywhere and says so on stderr
+- also: sitecustomize replaced by an explicit runner (python3 -I -m ws.run): no start-up hook, builtins untouched
+- open: 4 of 11 tasks used all 12 steps (t02, t09, t14, t23)
+

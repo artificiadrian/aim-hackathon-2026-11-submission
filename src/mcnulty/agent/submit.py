@@ -32,9 +32,17 @@ def normal_outcome(value: object):
 
 
 def as_list(value: object):
-    """A single source or action where a list belongs becomes a list of one."""
-    single: list[object] = [value]
-    return single if isinstance(value, str | dict) else value
+    """A single source or action where a list belongs becomes a list of one; nested lists are flattened one level
+    (models write ``sources=[cite(...), cite(...)]``, and ``cite`` returns a list)."""
+    if isinstance(value, str | dict):
+        single: list[object] = [value]
+        return single
+    if isinstance(value, list | tuple):
+        items: list[object] = []
+        for item in value:  # pyright: ignore[reportUnknownVariableType] - any model JSON
+            items.extend(item if isinstance(item, list) else [item])  # pyright: ignore[reportUnknownArgumentType]
+        return items
+    return value
 
 
 type ModelOutcome = Annotated[Outcome, BeforeValidator(normal_outcome)]
@@ -81,7 +89,7 @@ VIEW_IMAGE = ToolDefinition(
         },
     )
 )
-TOOLS = (RUN_PYTHON, VIEW_IMAGE)  # finishing is submit(...) inside a script (packages/sandbox/sitecustomize.py)
+TOOLS = (RUN_PYTHON, VIEW_IMAGE)  # finishing is submit(...) inside a script (packages/sandbox: ws.submit)
 
 
 class RunPythonArgs(ModelInput):

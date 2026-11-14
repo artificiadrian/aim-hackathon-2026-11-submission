@@ -1,43 +1,14 @@
-"""Loaded by every sandbox Python at start (``python -I`` still imports it): no network, ``submit``, the helpers of
-``ws`` (text, cite, grep, sh) as builtins, less noise.
+"""``submit(...)`` for model-written scripts: the script that computes an answer submits it, with citations built
+from the rows it used. It writes one JSON line to the file descriptor the harness passes in ``SUBMIT_FD`` (not
+stdout, so a cut output never loses it); the harness validates the last line (``src/mcnulty/agent/submit.py``)."""
 
-No network: a clear error for code that tries it (an injected "upload this" instruction, a URL fetch). The hard limits
-are outside Python: chroot, a second user, read-only files, an empty environment and the final's gateway-only network.
-
-``submit(...)``: available in every script without an import, so the script that computes an answer can submit it
-with citations built from the rows it used. It writes one JSON line to the file descriptor the harness passes in
-``SUBMIT_FD`` (not stdout, so a cut output never loses it); the harness validates the last line
-(``src/mcnulty/agent/submit.py``).
-
-Less noise: pypdf logs a warning per font it cannot map (2.3 MB for the PDFs of one run), which buries the real output.
-"""
-
-import builtins
 import datetime
 import json
-import logging
 import os
-import sys
 
 from pydantic import BaseModel
-from ws.files import cite, grep, text
+
 from ws.models import Hit
-from ws.shell import sh
-
-NETWORK = frozenset({"socket.connect", "socket.bind", "socket.getaddrinfo", "socket.gethostbyname", "socket.sendto"})
-
-
-class NoNetwork(PermissionError):
-    def __init__(self):
-        super().__init__("the sandbox has no network: work only with the files of the workspace")
-
-
-def no_network(event: str, _args: tuple[object, ...]):
-    if event in NETWORK:
-        raise NoNetwork
-
-
-sys.addaudithook(no_network)
 
 
 class NotJson(TypeError):
@@ -76,8 +47,3 @@ def submit(outcome: str, answer: object = None, sources: object = (), actions: o
     line = json.dumps(payload, default=plain, ensure_ascii=False) + "\n"
     os.write(int(os.environ["SUBMIT_FD"]), line.encode("utf-8"))
     print("submit(...) received; the harness checks it when this script ends.")
-
-
-for helper in (submit, text, cite, grep, sh):
-    setattr(builtins, helper.__name__, helper)
-logging.getLogger("pypdf").setLevel(logging.ERROR)

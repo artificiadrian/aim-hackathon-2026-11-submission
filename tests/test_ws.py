@@ -36,3 +36,11 @@ def test_every_citation_of_the_helpers_is_one_the_harness_accepts(files: Path):
     for source in found:
         accepted = Source.model_validate_json(source.model_dump_json(exclude_none=True))
         assert accepted.model_dump(exclude_none=True) == source.model_dump(exclude_none=True)
+
+
+def test_cite_with_a_column_a_file_does_not_have_still_cites(files: Path, capsys: pytest.CaptureFixture[str]):
+    """A missing column must not raise: the eval of 2026-11-14 13:58 lost t09's whole submit(...) to it."""
+    found = cite(str(files / "a.jsonl"), "devops-07", column="ts")
+    assert [s.line for s in found] == [2]
+    assert "no column 'ts'" in capsys.readouterr().err
+    assert [s.record for s in cite(str(files / "r.csv"), "int", column="actor")] == ["RQ-2"]

@@ -179,3 +179,12 @@ def test_a_closed_ticket_is_history_and_the_open_one_the_request():
     assert not closed("A ticket without front matter.")
     message = first_message("Work the open ticket.", {"/tickets/IR-2.md": "open one"}, {"/tickets/IR-1.md": "old"}, {})
     assert "/tickets/IR-1.md (closed ticket: history, not a request)" in message
+
+
+def test_nested_source_lists_are_flattened():
+    """Models write sources=[cite(...)] and cite returns a list: the eval of 2026-11-14 13:58 lost every source so."""
+    nested = (
+        '{"outcome": "OK", "answer": 1, "sources": [[{"path": "/a.md", "line": 2}], {"path": "/b.csv", "record": "R"}]}'
+    )
+    args = parse_submit(nested)
+    assert [(s.path, s.line, s.record) for s in args.sources] == [("/a.md", 2, None), ("/b.csv", None, "R")]

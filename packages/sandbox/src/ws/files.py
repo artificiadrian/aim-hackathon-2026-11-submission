@@ -1,17 +1,13 @@
 """Read, cite and grep workspace files of any format (``formats``); results are ``models`` types."""
 
 import re
+import sys
 from pathlib import Path
 
 from ws.formats import CACHE, units
-from ws.models import Hit, Source
+from ws.models import Hit, Source, Unit
 
 SKIPPED = frozenset({"bin", "sbin", "lib", "lib32", "lib64", "libx32", "usr", "etc", "tmp", "proc", "dev"})
-
-
-class ColumnNotFound(KeyError):
-    def __init__(self, column: str, path: str):
-        super().__init__(f"no row of {path} names a column {column!r}; look with text(path) first")
 
 
 def text(path: str, limit: int | None = 200):
@@ -26,30 +22,35 @@ def text(path: str, limit: int | None = 200):
 def cite(path: str, value: object = None, column: str | None = None):
     """Sources for the units of ``path`` that contain ``value`` (as text, any case); the whole file when None.
     ``column``: in a table (csv, xlsx, ods), only rows whose cell in that column equals ``value``; the header is the
-    first row of each sheet that names the column."""
+    first row of each sheet that names the column. Never raises for a missing column: a citation helper must not
+    stop the submit(...) it is part of; it matches the value anywhere and says so on stderr."""
     found = units(path)
     if value is None or not found:
         return [Source(path=path)]
     wanted = str(value).casefold()
+    headers = column_indexes(found, column) if column is not None else {}
+    if column is not None and not headers:
+        print(f"cite: no column {column!r} in {path}; matched {value!r} anywhere in each unit", file=sys.stderr)
     sources: list[Source] = []
-    headers: dict[str | None, int] = {}  # sheet (None for csv) -> index of the column
     for unit in found:
-        if column is None:
+        index = headers.get(unit.source.sheet)
+        if index is None:
             hit = wanted in unit.text.casefold()
         else:
-            sheet = unit.source.sheet
-            if sheet not in headers:
-                names = [c.strip().casefold() for c in unit.cells]
-                if column.casefold() in names:
-                    headers[sheet] = names.index(column.casefold())
-                continue
-            index = headers[sheet]
             hit = index < len(unit.cells) and unit.cells[index].strip().casefold() == wanted
         if hit:
             sources.append(unit.source)
-    if column is not None and not headers:
-        raise ColumnNotFound(column, path)
     return sources
+
+
+def column_indexes(found: list[Unit], column: str):
+    """Sheet (None for csv) -> index of ``column``, from the first row of each sheet that names it."""
+    headers: dict[str | None, int] = {}
+    for unit in found:
+        names = [c.strip().casefold() for c in unit.cells]
+        if unit.source.sheet not in headers and column.casefold() in names:
+            headers[unit.source.sheet] = names.index(column.casefold())
+    return headers
 
 
 def files_under(root: Path):

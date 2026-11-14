@@ -1,7 +1,7 @@
 [project]
 name = "mcnulty-sandbox"
 version = "0.1.0"
-description = "What model-written code gets inside the sandbox: helpers (ws) and sitecustomize (no network, submit)."
+description = "What model-written code gets inside the sandbox: the runner (ws.run) and the helpers."
 authors = [
     { name = "artificiadrian", email = "36929853+artificiadrian@users.noreply.github.com" }
 ]
@@ -24,6 +24,4 @@ requires = ["uv_build>=0.13.6,<0.14.0"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
-# The helpers only. sitecustomize.py (next to this file) is copied into the image's system Python by the Dockerfile,
-# never installed: in the shared dev venv it would block the harness's own network.
 module-name = "ws"
