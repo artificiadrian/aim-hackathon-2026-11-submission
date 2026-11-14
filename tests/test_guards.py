@@ -36,7 +36,8 @@ def manifest_of(run_dir: Path):
 def fully_collected(run_dir: Path):
     if not (run_dir / "finish.json").exists() or not (run_dir / "manifest.json").exists():
         return False
-    return all((BLOBS.root / b.sha256).exists() for b in manifest_of(run_dir).blobs)
+    manifest = manifest_of(run_dir)  # a run whose manifest failed (HTTP 500, 15:24Z) lists no tasks
+    return bool(manifest.tasks) and all((BLOBS.root / b.sha256).exists() for b in manifest.blobs)
 
 
 RUNS = sorted(d for d in (REPO_ROOT / "runs").glob("*") if fully_collected(d))

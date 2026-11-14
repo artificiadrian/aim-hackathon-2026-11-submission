@@ -229,3 +229,26 @@ def test_the_blob_cache_survives_parallel_readers_and_writers(tmp_path: Path):
     (tmp_path / "blobs" / sha).write_bytes(b"damaged")
     assert cache.get(sha) is None
     assert (tmp_path / "blobs" / sha).exists()  # not deleted: put replaces it
+
+
+def test_a_failed_run_manifest_falls_back_to_each_task_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A full run at 15:24Z got HTTP 500 on the run manifest (every retry) and ran 47 tasks with an empty workspace."""
+
+    def no_wait(_seconds: float):
+        return None
+
+    monkeypatch.setattr("mcnulty.clients.arena.time.sleep", no_wait)
+
+    def handler(request: httpx.Request):
+        if request.url.path.endswith("/runs/r/manifest"):
+            return httpx.Response(500, json={"error": "internal"})
+        if request.url.path.endswith("/tasks/t01/manifest"):
+            return httpx.Response(200, json={"files": [{"path": "AGENTS.md", "sha256": "a1", "size": 5}]})
+        return httpx.Response(500, json={"error": "internal"})  # t02's manifest fails too
+
+    arena = ArenaClient(
+        http=httpx.Client(base_url="http://arena.test/api/v1", transport=httpx.MockTransport(handler)),
+        cache=BlobCache(root=tmp_path / "blobs"),
+    )
+    manifest = arena.manifest(Recorder(events=EventLog(run_dir=tmp_path / "run")), "r", ["t01", "t02"])
+    assert [(t.task_id, t.files) for t in manifest.tasks] == [("t01", {"/AGENTS.md": "a1"})]

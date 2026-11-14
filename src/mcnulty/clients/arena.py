@@ -6,6 +6,7 @@ import subprocess
 import threading
 import time
 import zipfile
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -150,6 +151,17 @@ class RunManifest(Open):
     tasks: tuple[TaskFiles, ...] = ()
 
 
+class ManifestFile(Open):
+    path: str
+    sha256: str
+
+
+class TaskManifest(Open):
+    """``GET /runs/{run_id}/tasks/{task_id}/manifest``: one task's files in their current state."""
+
+    files: tuple[ManifestFile, ...] = ()
+
+
 class RunMeta(Frozen):
     commit: str | None = None
     dirty: bool | None = None
@@ -284,6 +296,27 @@ class ArenaClient:
 
     def run_manifest(self, rec: Recorder, run_id: str):
         return RunManifest.model_validate_json(self.send(rec, "GET", f"/runs/{run_id}/manifest").content)
+
+    def task_manifest(self, rec: Recorder, run_id: str, task_id: str):
+        manifest = TaskManifest.model_validate_json(
+            self.send(rec, "GET", f"/runs/{run_id}/tasks/{task_id}/manifest").content
+        )
+        return {"/" + f.path.lstrip("/"): f.sha256 for f in manifest.files}
+
+    def manifest(self, rec: Recorder, run_id: str, task_ids: Iterable[str]):
+        """The run manifest; when it fails, built from each task's own manifest. A full run at 15:24Z got HTTP 500 on
+        the run manifest for every retry and ran 47 tasks with an empty workspace. A task whose own manifest fails
+        too runs without files (and is still submitted)."""
+        try:
+            return self.run_manifest(rec, run_id)
+        except ArenaError:
+            tasks: list[TaskFiles] = []
+            for task_id in task_ids:
+                try:
+                    tasks.append(TaskFiles(task_id=task_id, files=self.task_manifest(rec, run_id, task_id)))
+                except ArenaError:  # send() logs the request
+                    continue
+            return RunManifest(tasks=tuple(tasks))
 
     def blob(self, rec: Recorder, run_id: str, sha256: str, task_id: str | None = None):
         with self.lock_for(sha256):

@@ -26,7 +26,6 @@ from mcnulty.clients.arena import (
     ArenaError,
     Run,
     RunKind,
-    RunManifest,
     RunMeta,
     Submission,
     Task,
@@ -135,10 +134,7 @@ def run_tasks(settings: Settings, args: RunArgs, started: float):
     note = f", note: {args.note}" if args.note else ""
     head = f"run {run.run_id} ({run.kind}, theme={run.theme}, seed={run.seed})"
     print(f"{head}, {len(tasks)} tasks, {len(done)} already submitted, dir={run_dir}{note}")
-    try:
-        manifest = arena.run_manifest(rec, run.run_id)
-    except ArenaError:
-        manifest = RunManifest()  # every task is solved without files and still submitted
+    manifest = arena.manifest(rec, run.run_id, [t.task_id for t in tasks])  # falls back to each task's manifest
     (run_dir / "manifest.json").write_text(manifest.model_dump_json(indent=1), encoding="utf-8")
     manifest_files = {t.task_id: t.files for t in manifest.tasks}
     if args.collect:
