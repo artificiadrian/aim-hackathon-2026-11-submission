@@ -5,9 +5,10 @@ performs them (after the loop, through the Task API). The model never acts direc
 import csv
 import io
 import re
+from pathlib import PurePosixPath
 from typing import Annotated, Literal
 
-from pydantic import Field
+from pydantic import AfterValidator, Field
 
 from mcnulty.agent.guards import (
     Finding,
@@ -51,8 +52,13 @@ class BlockDomain(ModelInput):
     domain: str
 
 
+class AddNote(ModelInput):
+    op: Literal["add_note"]
+    text: str
+
+
 ContainmentOp = Annotated[
-    QuarantineAgent | ReleaseAgent | RevokeToken | RotateToken | BlockDomain, Field(discriminator="op")
+    QuarantineAgent | ReleaseAgent | RevokeToken | RotateToken | BlockDomain | AddNote, Field(discriminator="op")
 ]
 
 
@@ -68,9 +74,16 @@ class SendMessage(ModelInput):
     body: str
 
 
+def draft_path(path: str):
+    parts = PurePosixPath(path).parts
+    if parts[:2] != ("/", "drafts") or len(parts) < 3 or ".." in parts:
+        raise ValueError(f"a draft path must be a file under /drafts/: {path}")  # noqa: TRY003 - pydantic shows it
+    return path
+
+
 class WriteDraft(ModelInput):
     tool: Literal["write"]
-    path: str = Field(pattern=r"^/drafts/[^/].*")
+    path: Annotated[str, AfterValidator(draft_path)]
     content: str
 
 
@@ -96,6 +109,8 @@ def op_target(op: "ContainmentOp"):
             return op.token
         case BlockDomain():
             return op.domain
+        case AddNote():
+            return None
 
 
 class VettedAction(Frozen):
@@ -148,12 +163,14 @@ def vet(action: Action, gate: Gate):
                 action.content, gate.rules, frozenset()
             )
         case Containment():
-            kept = tuple(op for op in action.ops if gate.scope.allows(op.op, op_target(op)))
-            dropped = tuple(
-                f
+            ops = tuple(
+                op.model_copy(update={"text": defang_urls(op.text)}) if isinstance(op, AddNote) else op
                 for op in action.ops
-                if op not in kept
-                for f in not_asked(op.op, op_target(op), FindingKind.OP_DROPPED)
+            )
+            action = action.model_copy(update={"ops": ops})
+            kept = tuple(op for op in ops if gate.scope.allows(op.op, op_target(op)))
+            dropped = tuple(
+                f for op in ops if op not in kept for f in not_asked(op.op, op_target(op), FindingKind.OP_DROPPED)
             )
             findings = dropped if kept else (*dropped, *not_asked("containment"))
             if kept:

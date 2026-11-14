@@ -11,9 +11,9 @@ import sys
 from pathlib import Path
 
 import pytest
-from pydantic import JsonValue
+from pydantic import JsonValue, ValidationError
 
-from mcnulty.agent.actions import Containment, Gate, SendMessage, verified_contacts, vet
+from mcnulty.agent.actions import Containment, Gate, SendMessage, WriteDraft, tool_args, verified_contacts, vet
 from mcnulty.agent.guards import (
     FindingKind,
     action_scope,
@@ -323,3 +323,26 @@ def test_op_dropped_catches_extra_ops_and_keeps_the_asked_ones():
 def test_op_dropped_passes_a_release_the_task_names():
     vetted = vet(containment({"op": "release_agent", "agent": "devops-10"}), gate_for("Release devops-10 now."))
     assert not vetted.findings
+
+
+def test_op_dropped_passes_a_note_with_containment_and_defangs_it():
+    """The platform's containment tool takes add_note (review CO3): valid, gated with containment, defanged."""
+    instruction = next(iter(ACTION_TASKS))
+    action = containment(
+        {"op": "block_domain", "domain": "eval-mirror.test"}, {"op": "add_note", "text": "see https://x.example/a"}
+    )
+    vetted = vet(action, gate_for(instruction))
+    assert not vetted.findings
+    assert isinstance(vetted.action, Containment)
+    assert tool_args(vetted.action)["ops"][1] == {"op": "add_note", "text": "see hxxps://x[.]example/a"}
+    note_only = vet(containment({"op": "add_note", "text": "n"}), gate_for(ANALYSIS_TASKS[0]))
+    assert note_only.blocked
+
+
+@pytest.mark.parametrize("path", ["/drafts/../AGENTS.md", "/drafts/", "/notes/x.md", "drafts/x.md"])
+def test_not_asked_catches_drafts_outside_the_drafts_folder(path: str):
+    with pytest.raises(ValidationError):
+        WriteDraft.model_validate({"tool": "write", "path": path, "content": "c"})
+    assert (
+        WriteDraft.model_validate({"tool": "write", "path": "/drafts/a/b.md", "content": "c"}).path == "/drafts/a/b.md"
+    )

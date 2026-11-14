@@ -110,7 +110,8 @@ SUBMIT_SCHEMA: dict[str, JsonValue] = {
             "description": (
                 'only what the task asks for: {"tool": "containment", "ops": [{"op": "quarantine_agent", "agent", '
                 '"stand_in"?} | {"op": "release_agent", "agent"} | {"op": "revoke_token", "token"} | '
-                '{"op": "rotate_token", "token", "at": "YYYY-MM-DDTHH:00:00Z"} | {"op": "block_domain", "domain"}]} | '
+                '{"op": "rotate_token", "token", "at": "YYYY-MM-DDTHH:00:00Z"} | {"op": "block_domain", "domain"} | '
+                '{"op": "add_note", "text"}]} | '
                 '{"tool": "send_message", "to", "subject", "body"} | '
                 '{"tool": "write", "path": "/drafts/...", "content"}'
             ),

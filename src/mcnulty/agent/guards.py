@@ -56,6 +56,7 @@ ASKED_BY = {  # action kind -> words in trusted text that ask for it
     "send_message": re.compile(r"\bsend\b", re.IGNORECASE),
     "write": re.compile(r"\b(?:draft|write)\b", re.IGNORECASE),
 }
+CONTAINMENT_KINDS = frozenset({"quarantine_agent", "release_agent", "revoke_token", "rotate_token", "block_domain"})
 NOT_A_REQUEST = re.compile(  # paths, scopes (send:email_external), negations, what others were told to do
     r"(?<!\w)/[\w./\-]+|\w+:\w+|\b(?:don't|do not|never|not)\s+\w+|\bto\s+(?:send|block|quarantine|release)\b",
     re.IGNORECASE,
@@ -134,6 +135,8 @@ class Scope(Frozen):
     trusted: str  # for ids that an action must name
 
     def allows(self, kind: str, target: str | None = None):
+        if kind == "add_note":  # a note goes with any containment the task asks for
+            return bool(self.kinds & CONTAINMENT_KINDS)
         if kind not in self.kinds:
             return False
         return kind != "release_agent" or (target is not None and target.lower() in self.trusted.lower())
