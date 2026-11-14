@@ -18,7 +18,10 @@ RUNS = sorted(
 def test_expected_sources_resolve(run_dir: Path):
     manifest = RunManifest.model_validate_json((run_dir / "manifest.json").read_text(encoding="utf-8"))
     finish = RunStatus.model_validate_json((run_dir / "finish.json").read_text(encoding="utf-8"))
-    cache = ParseCache(blobs=BlobCache(root=REPO_ROOT / ".cache" / "blobs"))
+    blobs = BlobCache(root=REPO_ROOT / ".cache" / "blobs")
+    if any(not (blobs.root / b.sha256).exists() for b in manifest.blobs):
+        pytest.skip("not every file of this run was downloaded (not a collect run)")
+    cache = ParseCache(blobs=blobs)
     files = {t.task_id: t.files for t in manifest.tasks}
     misses: list[str] = []
     checked = 0

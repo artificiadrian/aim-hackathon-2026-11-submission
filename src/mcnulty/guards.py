@@ -60,7 +60,7 @@ def rule_text(text: str, rules: tuple[str, ...]):
 
 
 def unverified_recipient(address: str, verified: frozenset[str]):
-    wanted = address.strip().lower()  # str.lower keeps look-alike letters (Cyrillic і) different from ASCII
+    wanted = address.strip().lower()  # str.lower keeps look-alike letters (e.g. Cyrillic U+0456) different from ASCII
     if any(wanted == v.strip().lower() for v in verified):
         return ()
     return (Finding(kind="unverified_recipient", detail=address),)

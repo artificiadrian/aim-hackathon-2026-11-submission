@@ -39,5 +39,5 @@ def test_known_token_value_without_prefix_is_found():
 def test_recipient_must_match_exactly_but_ignores_ascii_case():
     verified = frozenset({"Noah.Fischer@muggingface.example"})
     assert unverified_recipient("noah.fischer@muggingface.example", verified) == ()
-    lookalike = "noah.fischer@muggіngface.example"  # Cyrillic і
+    lookalike = "noah.fischer@mugg\u0456ngface.example"  # Cyrillic U+0456 in place of i
     assert [f.kind for f in unverified_recipient(lookalike, verified)] == ["unverified_recipient"]

@@ -176,6 +176,18 @@ class RunFinished(Frozen):
     by_model: dict[str, float]
 
 
+class SandboxRan(Frozen):
+    """One run of model-written code in the sandbox (``src/mcnulty/sandbox.py``)."""
+
+    kind: Literal["sandbox"] = "sandbox"
+    code: str
+    stdout: str  # cut to the sandbox's output limit
+    stderr: str
+    exit_code: int | None  # None when the run timed out
+    seconds: float
+    timed_out: bool
+
+
 class CheckResult(Frozen):
     """One step of ``mcnulty check``."""
 
@@ -194,6 +206,7 @@ Event = Annotated[
     | TaskCrashed
     | TaskFinished
     | RunFinished
+    | SandboxRan
     | CheckResult,
     Field(discriminator="kind"),
 ]
