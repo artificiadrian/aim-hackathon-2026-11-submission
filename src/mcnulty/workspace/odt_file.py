@@ -1,6 +1,6 @@
 """OpenDocument text: non-empty ``text:p`` and ``text:h`` in document order, and annotations (comments)."""
 
-from lxml import etree
+from xml.etree.ElementTree import Element
 
 from mcnulty.workspace.document import DocumentFile, numbered
 from mcnulty.workspace.odf import content, paragraphs_text, tag
@@ -9,7 +9,7 @@ PARAGRAPH_TAGS = {tag("text", "p"), tag("text", "h")}
 ANNOTATION = tag("office", "annotation")
 
 
-def body_text(element: etree._Element):
+def body_text(element: Element):
     """The element's text without annotations (comments) inside it."""
     parts = [element.text or ""]
     for child in element:
@@ -23,7 +23,7 @@ def parse_odt(path: str, data: bytes):
     texts: list[str] = []
     comments: list[str] = []
 
-    def walk(element: etree._Element):
+    def walk(element: Element):
         for child in element:
             if child.tag == ANNOTATION:
                 comments.append(paragraphs_text(child))  # not body text, so not walked further

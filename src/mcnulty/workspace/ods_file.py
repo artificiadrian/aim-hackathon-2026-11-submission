@@ -1,6 +1,6 @@
 """OpenDocument spreadsheets: every sheet, every row as shown, hidden rows and sheets marked."""
 
-from lxml import etree
+from xml.etree.ElementTree import Element
 
 from mcnulty.arena import Source
 from mcnulty.workspace.odf import attr, content, paragraphs_text, tag
@@ -9,7 +9,7 @@ from mcnulty.workspace.table import Table, TableFile, TableRow
 MAX_REPEAT = 1_000  # repeated empty rows and columns at the end of a sheet can repeat thousands of times
 
 
-def row_cells(row: etree._Element):
+def row_cells(row: Element):
     cells: list[str] = []
     for cell in row.iter(tag("table", "table-cell")):
         repeat = int(attr(cell, "table", "number-columns-repeated") or 1)
