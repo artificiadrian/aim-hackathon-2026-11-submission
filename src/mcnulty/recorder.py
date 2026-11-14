@@ -167,6 +167,18 @@ class TaskFinished(Frozen):
     feedback: tuple[str, ...]
 
 
+class TaskScored(Frozen):
+    """Offline grade of one task against the revealed answers of a saved dev run (``src/mcnulty/eval.py``)."""
+
+    kind: Literal["task_scored"] = "task_scored"
+    expected_outcome: str | None
+    outcome: str
+    answer_score: float
+    sources_hit: int
+    sources_expected: int
+    score: float
+
+
 class RunFinished(Frozen):
     kind: Literal["run_finished"] = "run_finished"
     cost_usd: float
@@ -205,6 +217,7 @@ Event = Annotated[
     | LlmFailed
     | TaskCrashed
     | TaskFinished
+    | TaskScored
     | RunFinished
     | SandboxRan
     | CheckResult,

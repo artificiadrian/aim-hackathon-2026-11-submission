@@ -29,7 +29,7 @@ class LLMError(RuntimeError):
 
 
 class BudgetExhausted(LLMError):
-    """403 from OpenRouter: the key's limit is reached. Every later call fails too, so stop calling models."""
+    """403 from OpenRouter (the key's limit) or our own spend cap: later calls fail too, so stop calling models."""
 
 
 class RetriesExhausted(LLMError):
@@ -228,8 +228,9 @@ class JevResponse(Reply):
 
 # --- cost ---------------------------------------------------------------------------------------------
 class CostTracker(BaseModel):
-    """Thread-safe tally of model spend in this process."""
+    """Thread-safe tally of model spend in this process, with an optional hard cap in USD."""
 
+    cap: float | None = None
     total: float = 0.0
     calls: int = 0
     prompt_tokens: int = 0
@@ -244,6 +245,10 @@ class CostTracker(BaseModel):
             self.prompt_tokens += usage.prompt_tokens
             self.completion_tokens += usage.completion_tokens
             self.by_model[model] = self.by_model.get(model, 0.0) + usage.cost
+
+    @property
+    def capped(self):
+        return self.cap is not None and self.total >= self.cap
 
 
 # --- client -------------------------------------------------------------------------------------------
@@ -272,6 +277,8 @@ class OpenRouterClient(BaseModel):
 
     def post[R: Reply](self, rec: Recorder, url: str, request: Frozen, reply: type[R], timeout: float = 180.0):
         """POST with retries on network errors, 408, 429, 5xx, 402 + Retry-After and 200 + error body."""
+        if self.tracker.capped:
+            raise BudgetExhausted(url, None, f"spend cap ${self.tracker.cap} reached (${self.tracker.total:.4f})")
         body = request.model_dump(mode="json", exclude_none=True)
         last = ""
         for attempt in range(RETRIES + 1):
