@@ -179,6 +179,9 @@ def run_tasks(settings: Settings, args: RunArgs, started: float):
         files = manifest_files.get(task.task_id, {})
         try:
             arena.fetch_task(task_rec, run.run_id, task.task_id, files)
+        except Exception as e:
+            task_rec.log(TaskCrashed.from_exception(e))
+        try:
             return solve(task_rec, llm.for_task(), task, files, arena.cache, pool, deadline)
         except BudgetExhausted:
             return FALLBACK

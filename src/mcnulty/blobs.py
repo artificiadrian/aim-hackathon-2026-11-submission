@@ -18,14 +18,13 @@ class BlobCache:
     root: Path
 
     def get(self, sha256: str):
-        path = self.root / sha256
-        if not path.exists():
+        """The blob, or None when it is missing or does not match its hash (then ``put`` replaces it atomically).
+        Never deletes: with parallel tasks, another thread may be reading or writing the same blob."""
+        try:
+            data = (self.root / sha256).read_bytes()
+        except FileNotFoundError:
             return None
-        data = path.read_bytes()
-        if hashlib.sha256(data).hexdigest() != sha256:  # damaged on disk: download again
-            path.unlink(missing_ok=True)
-            return None
-        return data
+        return data if hashlib.sha256(data).hexdigest() == sha256 else None
 
     def put(self, sha256: str, data: bytes):
         if hashlib.sha256(data).hexdigest() != sha256:

@@ -331,8 +331,9 @@ class ArenaClient:
                 sha = wanted.get("/" + info.filename.lstrip("/"))
                 if sha is None or info.file_size > ZIP_MEMBER_MAX:
                     continue
-                with suppress(BlobMismatch):  # a file whose state changed since the manifest: fetched by its hash
-                    self.cache.put(sha, archive.read(info))
+                with self.lock_for(sha), suppress(BlobMismatch):  # changed since the manifest: fetched by hash
+                    if self.cache.get(sha) is None:
+                        self.cache.put(sha, archive.read(info))
 
     def prefetch(self, rec: Recorder, manifest: RunManifest, run_id: str):
         """Every file of every task into the cache, tasks in parallel (``mcnulty collect``)."""

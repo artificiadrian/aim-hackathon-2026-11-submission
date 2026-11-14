@@ -202,3 +202,30 @@ def test_a_restarted_final_resumes_the_open_final_run(tmp_path: Path):
     assert (run.run_id, [t.task_id for t in run.tasks]) == ("run_f", ["t01"])
     with pytest.raises(ArenaError):
         start_or_resume(rec, arena, RunArgs(kind="dev"), RunMeta())
+
+
+def test_the_blob_cache_survives_parallel_readers_and_writers(tmp_path: Path):
+    """Live run 13:28: 14 tasks crashed when a parallel get() deleted a blob another task was reading."""
+    cache = BlobCache(root=tmp_path / "blobs")
+    data = b"shared by every task" * 1000
+    sha = hashlib.sha256(data).hexdigest()
+    errors: list[Exception] = []
+
+    def work():
+        try:
+            for _ in range(50):
+                cache.put(sha, data)
+                assert cache.get(sha) in (data, None)
+        except Exception as e:
+            errors.append(e)
+
+    threads = [threading.Thread(target=work) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    assert cache.get(sha) == data
+    (tmp_path / "blobs" / sha).write_bytes(b"damaged")
+    assert cache.get(sha) is None
+    assert (tmp_path / "blobs" / sha).exists()  # not deleted: put replaces it
