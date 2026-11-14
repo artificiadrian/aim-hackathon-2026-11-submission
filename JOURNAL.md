@@ -71,3 +71,10 @@ Format example (ignored: it sits in a code block). Write your entries below it, 
 - why: the experiment showed Gemma writes working Python (59/63 scripts ran) and fails on loop friction; a real filesystem with plain Python and pandas removes the helper API the model tripped on; chroot + second user in the same Docker image isolates scripts from our keys and behaves the same locally and in the final
 - rejected: a `ws` helper API (all failed scripts bypassed it), native macOS sandboxing (no chroot, differs from the final), plain-text views of binary files (maybe later, decide with data)
 - evidence: docs/research/2026-11-14-code-mode-experiment.md (4/11 correct, $0.0073 per task); docs/plan.md
+
+## 12:30 · Sandbox: one root per task, hard links to a copy made once per container
+
+- decided_by: both
+- why: the model writes to a scratch folder (`/tmp`, kept between steps) but cannot change the workspace files or its own Python; it gets pandas, numpy, openpyxl, odfpy, python-docx, pypdf, pillow, pyyaml and tzdata. Docker's overlay filesystem copies a file up on every hard link, so the 320 MB root is copied once into the writable layer; each task's root is then a hard-link copy (0.1 s, 4 MB) under the final's 4 GB disk limit
+- rejected: hard links straight from the image (320 MB per task); one shared root (tasks run in parallel at the same paths); a pool of slots (more moving parts); blocking processes (Python is enough; the network block in sitecustomize is for a clear error, the hard limits are chroot, uid, read-only files, empty environment and the gateway-only network)
+- evidence: tests/test_sandbox.py in the image (11 passed); a real task with 393 files ready in 0.5 s

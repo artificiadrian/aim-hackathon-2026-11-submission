@@ -25,6 +25,16 @@ uv run mcnulty check                                       # live check of every
 uv run ruff check --fix && uv run ruff format && uv run basedpyright && uv run pytest   # in this order
 ```
 
+The sandbox (`src/mcnulty/sandbox.py`) works only inside the Docker image, so anything that runs model code runs
+there. Mounting `src/` means a code change needs no rebuild; rebuild after a dependency or `Dockerfile` change.
+
+```bash
+docker build -t mcnulty .
+docker run --rm -v "$PWD/src:/app/src" -v "$PWD/tests:/app/tests" --entrypoint uv mcnulty run --frozen pytest tests/test_sandbox.py
+docker run --rm --env-file .env -v "$PWD/src:/app/src" -v "$PWD/runs:/app/runs" -v "$PWD/.cache:/app/.cache" \
+  --entrypoint mcnulty mcnulty eval runs/<collect run> --max-usd 0.10 --tasks t01
+```
+
 ## Hard rules
 
 - Runtime models: only `google/gemma-4-31b-it`, `typesafe/jev-1.14` and `qwen/qwen3-embedding-8b`, through

@@ -193,7 +193,7 @@ class SandboxRan(Frozen):
 
     kind: Literal["sandbox"] = "sandbox"
     code: str
-    stdout: str  # cut to the sandbox's output limit
+    stdout: str  # full output, up to RECORD_MAX characters
     stderr: str
     exit_code: int | None  # None when the run timed out
     seconds: float

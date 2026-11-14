@@ -1,41 +1,56 @@
-"""Run model-written Python in a child process, with a parsed copy of the task workspace beside it.
+"""Run model-written Python on the task's real files, isolated. Works only inside the Docker image (Linux, root).
 
-The child runs ``sys.executable -I`` with an empty environment (no keys), its own temp folder as cwd, a wall-clock
-timeout and CPU, memory and file-size limits. The script sees the workspace only as JSON files and the stdlib helper
-module ``ws`` (``src/mcnulty/sandbox_ws.py``). In the final container it should also run as a second Unix user.
-Note: macOS does not enforce ``RLIMIT_AS``; Linux does.
+Layout in the container:
+
+- ``/sandbox/image``: the sandbox root filesystem (Python 3.12, pandas, openpyxl, ...), built by the Dockerfile.
+- ``/sandbox/base``: a copy of it in the container's writable layer, made once per container. Docker's overlay
+  filesystem copies a file up on every hard link, so linking from the image would write 320 MB per task.
+- ``/sandbox/tasks/<task>``: one root per task, hard links to ``base`` (0.1 s, 4 MB) plus the task's files at their
+  workspace paths. The code sees ``/AGENTS.md``, ``/logs/...`` as plain files.
+
+Each run: ``chroot`` into the task root as uid 10001, cwd ``/``, an environment without keys, resource limits and a
+wall-clock timeout. Workspace files and the system are root-owned and read-only; ``/tmp`` is the writable scratch
+folder and is kept between the runs of a task. ``sitecustomize.py`` in the image blocks the network.
 """
 
-import contextlib
-import json
-import resource
+import os
 import shutil
+import signal
 import subprocess
-import sys
+import threading
 import time
 from pathlib import Path
 
-from pydantic import BaseModel
-
+from mcnulty.arena import BlobCache
 from mcnulty.recorder import Frozen, Recorder, SandboxRan
-from mcnulty.workspace.document import DocumentFile
-from mcnulty.workspace.image_file import ImageFile
-from mcnulty.workspace.json_file import JsonFile
-from mcnulty.workspace.jsonl_file import JsonLinesFile
-from mcnulty.workspace.parse import ParsedFile, UnreadableFile
-from mcnulty.workspace.pdf_file import PdfFile
-from mcnulty.workspace.table import TableFile
-from mcnulty.workspace.text_file import TextFile
-from mcnulty.workspace.unknown_file import BinaryFile
-from mcnulty.workspace.workspace import Workspace
 
-TIMEOUT = 20.0  # seconds, wall clock
-CPU_SECONDS = 20
-MEMORY = 1 << 30  # bytes of address space
-FILE_SIZE = 64 << 20  # bytes per written file
-OUTPUT_MAX = 4_000  # characters kept of stdout and of stderr
-HELPER = Path(__file__).with_name("sandbox_ws.py")
-BOOT = "import sys, runpy; sys.path.insert(0, '.'); import ws; runpy.run_path('main.py', {'ws': ws}, '__main__')"
+IMAGE = Path("/sandbox/image")
+BASE = Path("/sandbox/base")
+TASKS = Path("/sandbox/tasks")
+UID = 10001
+TIMEOUT = 30.0  # seconds, wall clock
+LIMITS = (
+    "--as=1500000000",  # bytes of address space
+    "--cpu=30",  # CPU seconds
+    "--fsize=67108864",  # bytes per written file
+    "--nproc=256",  # processes of uid 10001, all tasks together
+    "--nofile=256",
+)
+ENV = {
+    "PATH": "/usr/local/bin:/usr/bin:/bin",
+    "HOME": "/tmp",  # noqa: S108 - the scratch folder inside the task's chroot
+    "LANG": "C.UTF-8",
+    "TZ": "UTC",
+    "OPENBLAS_NUM_THREADS": "1",
+    "OMP_NUM_THREADS": "1",
+}
+RECORD_MAX = 1_000_000  # characters of stdout and stderr kept in the record
+BASE_LOCK = threading.Lock()
+
+
+class SandboxUnavailable(RuntimeError):
+    def __init__(self):
+        super().__init__(f"no {IMAGE}: the sandbox runs only inside the Docker image (see AGENTS.md, Commands)")
 
 
 class SandboxResult(Frozen):
@@ -46,105 +61,92 @@ class SandboxResult(Frozen):
     timed_out: bool
 
 
-def limit_resources():
-    resource.setrlimit(resource.RLIMIT_CPU, (CPU_SECONDS, CPU_SECONDS))
-    with contextlib.suppress(ValueError):  # macOS refuses RLIMIT_AS in some processes and never enforces it
-        resource.setrlimit(resource.RLIMIT_AS, (MEMORY, MEMORY))
-    resource.setrlimit(resource.RLIMIT_FSIZE, (FILE_SIZE, FILE_SIZE))
+def ensure_base():
+    """Copy the image's sandbox root into the writable layer, once per container."""
+    with BASE_LOCK:
+        if BASE.exists():
+            return
+        if not IMAGE.exists():
+            raise SandboxUnavailable
+        partial = BASE.with_name("base.partial")
+        shutil.rmtree(partial, ignore_errors=True)
+        subprocess.run(["/bin/cp", "-a", str(IMAGE), str(partial)], check=True)  # noqa: S603
+        partial.rename(BASE)
 
 
-def cut(text: str):
-    """Head and tail of a long output, with the number of characters left out."""
-    if len(text) <= OUTPUT_MAX:
-        return text
-    half = OUTPUT_MAX // 2
-    return f"{text[:half]}\n... [{len(text) - OUTPUT_MAX} characters cut] ...\n{text[-half:]}"
+def decode(raw: bytes):
+    return raw.decode("utf-8", errors="replace")
 
 
-def as_text(raw: bytes | str | None):
-    if raw is None:
-        return ""
-    return raw if isinstance(raw, str) else raw.decode("utf-8", errors="replace")
+class TaskSandbox(Frozen):
+    root: Path
 
+    @classmethod
+    def create(cls, task_id: str, files: dict[str, str], blobs: BlobCache):
+        """A fresh root for one task with its files (path -> sha256) at their workspace paths, read-only."""
+        ensure_base()
+        root = TASKS / task_id
+        shutil.rmtree(root, ignore_errors=True)
+        TASKS.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["/bin/cp", "-al", str(BASE), str(root)], check=True)  # noqa: S603
+        for path, sha in files.items():
+            data = blobs.get(sha)
+            if data is None:
+                continue  # not downloaded: the file is missing in the sandbox as on a broken share
+            target = root / path.lstrip("/")
+            target.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+            target.unlink(missing_ok=True)  # a system file at a workspace path: never write through its hard link
+            target.write_bytes(data)
+            target.chmod(0o444)
+        return cls(root=root)
 
-def run_code(rec: Recorder, folder: Path, code: str):
-    """Run ``code`` as ``main.py`` in ``folder`` (made by ``prepare``); log and return the result."""
-    (folder / "main.py").write_text(code, encoding="utf-8")
-    t0 = time.time()
-    try:
-        done = subprocess.run(  # noqa: S603 - running untrusted code in a limited child is the purpose
-            [sys.executable, "-I", "-c", BOOT],
-            cwd=folder,
-            env={},
-            capture_output=True,
-            timeout=TIMEOUT,
-            preexec_fn=limit_resources,
-            stdin=subprocess.DEVNULL,
-            check=False,  # a failed script is a normal result for the model to read
+    def run(self, rec: Recorder, code: str, timeout: float = TIMEOUT):
+        """Run ``code`` with ``python -I`` as uid 10001 in the task root; log and return the full output."""
+        command = [
+            "/usr/bin/prlimit",
+            *LIMITS,
+            "--",
+            "/usr/sbin/chroot",
+            f"--userspec={UID}:{UID}",
+            str(self.root),
+            "/usr/local/bin/python3",
+            "-I",
+            "-",
+        ]
+        t0 = time.time()
+        with subprocess.Popen(  # noqa: S603 - running untrusted code in the isolated child is the purpose
+            command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=ENV,
+            start_new_session=True,  # its own process group, so a timeout kills every child too
+        ) as child:
+            try:
+                out, err = child.communicate(code.encode("utf-8"), timeout=timeout)
+                exit_code, timed_out = child.returncode, False
+            except subprocess.TimeoutExpired:
+                os.killpg(child.pid, signal.SIGKILL)
+                out, err = child.communicate()
+                exit_code, timed_out = None, True
+        result = SandboxResult(
+            stdout=decode(out),
+            stderr=decode(err),
+            exit_code=exit_code,
+            seconds=round(time.time() - t0, 3),
+            timed_out=timed_out,
         )
-        stdout, stderr, exit_code, timed_out = as_text(done.stdout), as_text(done.stderr), done.returncode, False
-    except subprocess.TimeoutExpired as e:
-        stdout, stderr, exit_code, timed_out = as_text(e.stdout), as_text(e.stderr), None, True
-        stderr += f"\nTimeoutError: the script ran longer than {TIMEOUT:.0f} seconds and was stopped."
-    result = SandboxResult(
-        stdout=cut(stdout),
-        stderr=cut(stderr),
-        exit_code=exit_code,
-        seconds=round(time.time() - t0, 3),
-        timed_out=timed_out,
-    )
-    rec.log(SandboxRan(code=code, **result.model_dump()))
-    return result
+        rec.log(
+            SandboxRan(
+                code=code,
+                stdout=result.stdout[:RECORD_MAX],
+                stderr=result.stderr[:RECORD_MAX],
+                exit_code=result.exit_code,
+                seconds=result.seconds,
+                timed_out=result.timed_out,
+            )
+        )
+        return result
 
-
-# --- workspace export ---------------------------------------------------------------------------------
-def unit(source: BaseModel, text: str, **extra: object):
-    return {"cite": source.model_dump(exclude_none=True), "text": text, **extra}
-
-
-def export(parsed: ParsedFile):
-    """One parsed file as plain JSON: its kind, its citable units and any extra facts."""
-    match parsed:
-        case TextFile():
-            return {"kind": "text", "units": [unit(u.source, u.text) for u in parsed.lines], "info": {}}
-        case JsonFile():
-            units = [unit(u.source, u.text) for u in parsed.lines]
-            return {"kind": "json", "units": units, "info": {"value": parsed.value}}
-        case JsonLinesFile():
-            units = [unit(u.source, u.text, value=u.value) for u in parsed.lines]
-            return {"kind": "jsonl", "units": units, "info": {}}
-        case TableFile():
-            units = [
-                unit(r.source, " | ".join(r.cells), cells=list(r.cells), hidden=r.hidden, table=t.name)
-                for t in parsed.tables
-                for r in t.rows
-            ]
-            tables = [{"name": t.name, "hidden": t.hidden, "rows": len(t.rows)} for t in parsed.tables]
-            return {"kind": "table", "units": units, "info": {"tables": tables}}
-        case DocumentFile():
-            units = [unit(p.source, p.text) for p in parsed.paragraphs]
-            return {"kind": "document", "units": units, "info": {"comments": list(parsed.comments)}}
-        case PdfFile():
-            units = [unit(p.source, p.text, image_count=p.image_count) for p in parsed.pages]
-            return {"kind": "pdf", "units": units, "info": {}}
-        case ImageFile():
-            info = parsed.model_dump(mode="json", exclude={"kind", "path"})
-            return {"kind": "image", "units": [], "info": info}
-        case BinaryFile():
-            return {"kind": "binary", "units": [], "info": {"sha256": parsed.sha256, "size": parsed.size}}
-        case UnreadableFile():
-            return {"kind": "unreadable", "units": [], "info": {"error": parsed.error.message}}
-
-
-def prepare(workspace: Workspace, folder: Path):
-    """Write ``ws.py`` and the parsed workspace (``workspace/index.json`` + one JSON per file) into ``folder``."""
-    data = folder / "workspace"
-    data.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(HELPER, folder / "ws.py")
-    index: list[dict[str, object]] = []
-    for n, path in enumerate(sorted(workspace.files)):
-        exported = {"path": path, **export(workspace.get(path))}
-        name = f"{n:04d}.json"
-        (data / name).write_text(json.dumps(exported, ensure_ascii=False), encoding="utf-8")
-        index.append({"path": path, "kind": exported["kind"], "units": len(exported["units"]), "file": name})
-    (data / "index.json").write_text(json.dumps(index, ensure_ascii=False), encoding="utf-8")
+    def remove(self):
+        shutil.rmtree(self.root, ignore_errors=True)
