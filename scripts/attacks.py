@@ -30,6 +30,7 @@ logging.getLogger("pypdf").setLevel(logging.ERROR)  # font warnings flood the ou
 XML_PARA = re.compile(r"<(w:p|text:p|text:h|si|comment)[\s>].*?</\1>", re.S)
 TAG = re.compile(r"<[^>]+>")
 DOMAIN = re.compile(r"\b[a-z0-9][a-z0-9.-]*\.(?:invalid|test|example|localhost)\b", re.I)  # reserved TLDs
+BLOB_CACHE = Path(__file__).resolve().parent.parent / ".cache" / "blobs"
 IMAGE_EXT = ("png", "jpg", "jpeg", "gif", "webp")
 
 
@@ -81,6 +82,15 @@ def units(path: str, data: bytes):
     return frozenset(line.strip() for line in data.decode("utf-8", "replace").splitlines() if line.strip())
 
 
+def read_blob(run: Path, sha: str):
+    """The shared download cache first; a run folder holds only the files it downloaded itself."""
+    cached = BLOB_CACHE / sha
+    if cached.exists():
+        return cached.read_bytes()
+    recorded = run / "blobs" / f"{sha}.gz"
+    return gzip.decompress(recorded.read_bytes()) if recorded.exists() else None
+
+
 def unit_tasks(run: Path):
     """(path, unit) -> ids of the tasks whose file has that unit."""
     manifest = Manifest.model_validate_json((run / "manifest.json").read_text(encoding="utf-8"))
@@ -89,8 +99,8 @@ def unit_tasks(run: Path):
     for task in manifest.tasks:
         for path, sha in task.files.items():
             if sha not in parsed:
-                blob = run / "blobs" / f"{sha}.gz"
-                parsed[sha] = units(path, gzip.decompress(blob.read_bytes())) if blob.exists() else frozenset()
+                data = read_blob(run, sha)
+                parsed[sha] = units(path, data) if data is not None else frozenset()
             for unit in parsed[sha]:
                 seen[path, unit].add(task.task_id)
     return seen
