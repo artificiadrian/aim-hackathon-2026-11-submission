@@ -9,4 +9,7 @@ uv sync
 uv run mcnulty run --note "<hypothesis>" --tasks t01
 ```
 
-Every run writes all requests and responses to `runs/<UTC time>/events.jsonl`. Platform spec: `docs/ARENA_DOCS.md`.
+Every run writes all requests and responses to `runs/<UTC time>/events.jsonl`.
+
+The design notes, research and run reviews in `docs/` were removed before publishing, so links to files there do
+not resolve. The code is kept as it was at the end of the hackathon.
